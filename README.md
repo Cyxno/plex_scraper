@@ -44,10 +44,19 @@ Proof of Concept — TorBox-only, no DUMB / Real-Debrid / Usenet. See
 ## Quick start (Unraid / Docker Compose)
 
 ```bash
-cp .env.example .env               # fill in TORBOX_API_TOKEN
+cp .env.example .env               # fill in TORBOX_API_TOKEN (leave empty for
+                                   # offline demo mode: seeded mocks, synthetic content)
 cp config/preferences.example.yaml config/preferences.yaml
 docker compose up -d --build
 ```
+
+> Without a TorBox token the stack runs in demo mode: a seeded mock
+> provider/scraper serves deterministic bytes (or a real ffmpeg-generated MKV
+> if you place one at /mnt/cache/appdata/plex-scraper/data/demo-fixture.mkv),
+> so the whole pipeline can be exercised before wiring the real debrid.
+
+The control API is published on 127.0.0.1:${RESOLVER_HOST_PORT:-8282} — change
+RESOLVER_HOST_PORT in .env if the port is taken (e.g. by a DUMB stack).
 
 One-time host prep (verified on Unraid): the bind source must live under a
 shared mount (Unraid marks `/mnt/cache` as `shared`):
@@ -63,7 +72,7 @@ Register the test set:
 
 ```bash
 docker compose exec resolver python -m plex_scraper.cli register config/testset.example.yaml
-curl -s localhost:8282/media | jq
+curl -s localhost:${RESOLVER_HOST_PORT:-8282}/media | jq
 ls "/mnt/cache/appdata/plex-scraper/vfs/TV/Breaking Bad/Season 01/"
 ```
 
