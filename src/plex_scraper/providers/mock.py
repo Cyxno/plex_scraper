@@ -11,6 +11,7 @@ verifiable. Failure modes are injectable per hash:
 from __future__ import annotations
 
 import hashlib
+import os
 
 from .base import DebridProvider, LinkExpiredError, NotReadyError, ProviderError, ProviderTorrent
 
@@ -40,7 +41,11 @@ class MockProvider(DebridProvider):
         return self.specs.setdefault(info_hash, {"cached": False, "size": self.default_size})
 
     def content(self, info_hash: str) -> bytes:
-        return synthetic_bytes(info_hash, self._spec(info_hash).get("size", self.default_size))
+        spec = self._spec(info_hash)
+        if spec.get("file_path"):
+            with open(spec["file_path"], "rb") as fh:
+                return fh.read()
+        return synthetic_bytes(info_hash, spec.get("size", self.default_size))
 
     # ------------------------------------------------------- DebridProvider
     async def availability(self, info_hashes: list[str]) -> dict[str, list[dict]]:
@@ -49,8 +54,14 @@ class MockProvider(DebridProvider):
             spec = self.specs.get(h)
             if spec and spec.get("cached"):
                 out[h] = [{"id": 0, "name": spec.get("file_name") or f"{h}.mkv",
-                           "size": spec.get("size", self.default_size)}]
+                           "size": self._spec_size(h)}]
         return out
+
+    def _spec_size(self, info_hash: str) -> int:
+        spec = self._spec(info_hash)
+        if spec.get("file_path"):
+            return os.path.getsize(spec["file_path"])
+        return spec.get("size", self.default_size)
 
     async def ensure_torrent(self, info_hash: str, torrent_name: str) -> ProviderTorrent:
         spec = self._spec(info_hash)
@@ -61,7 +72,7 @@ class MockProvider(DebridProvider):
             raise NotReadyError(f"mock: torrent {info_hash} fails (transient)")
         file_id = 0
         files = {file_id: {"name": spec.get("file_name") or f"{torrent_name}.mkv",
-                           "size": spec.get("size", self.default_size)}}
+                           "size": self._spec_size(info_hash)}}
         torrent_id = f"t-{abs(hash(info_hash)) % (10 ** 8)}"
         self._tid_to_hash[torrent_id] = info_hash
         return ProviderTorrent(

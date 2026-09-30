@@ -13,7 +13,7 @@ services:
       - /mnt/cache/appdata/plex-scraper/data:/data
     ports:
       # PoC: control API stays on localhost of the Unraid host.
-      - "127.0.0.1:8282:8282"
+      - "127.0.0.1:${RESOLVER_HOST_PORT:-8282}:8282"
     restart: unless-stopped
 
   vfs:
@@ -21,6 +21,8 @@ services:
     build: .
     command: ["vfs"]
     env_file: .env
+    environment:
+      RESOLVER_URL: http://resolver:8282
     depends_on:
       - resolver
     cap_add:

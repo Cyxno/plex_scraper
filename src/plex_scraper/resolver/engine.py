@@ -271,6 +271,11 @@ class Resolver:
         src.cached = bool(torrent.cached)
         src.state = m.SourceState.CANDIDATE.value
         src.last_verified = m.now()
+        # final breakdown includes the cached bonus so the persisted score
+        # matches the one the ranking used
+        breakdown = self.scorer.score(
+            cand.torrent_name, cached=src.cached, seeders=cand.seeders, size=src.size)
+        src.score, src.score_json = breakdown.total, self._breakdown_json(breakdown)
         src = await self.store.upsert_source(src)
         return src
 

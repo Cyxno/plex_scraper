@@ -47,7 +47,7 @@ class Settings:
 
     # vfs
     vfs_mountpoint: str = "/mnt/plex-scraper"
-    resolver_url: str = "http://resolver:8282"
+    resolver_url: str = "http://127.0.0.1:8282"
     stream_readahead_bytes: int = 8388608
 
     # state machine budgets

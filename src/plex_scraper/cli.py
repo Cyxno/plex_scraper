@@ -35,12 +35,15 @@ def build_resolver(settings: Settings) -> Resolver:
     if settings.torbox_api_token or os.environ.get("TORBOX_API_TOKEN"):
         provider = TorboxProvider(settings)
     else:
-        # PoC convenience: run without a token -> mock provider (demo/test only)
+        # PoC convenience: run without a token -> seeded mocks (demo/test only)
+        from .providers.demo_seed import seeded_provider, seeded_scrapers
         logging.getLogger("resolver").warning(
-            "TORBOX_API_TOKEN not set — using MockProvider (no real content)")
-        provider = MockProvider()
+            "TORBOX_API_TOKEN not set — using seeded mock provider/scraper "
+            "(offline demo, synthetic bytes, no real content)")
+        provider = seeded_provider()
+        return Resolver(settings, store, provider, seeded_scrapers(), scorer, caches)
     scrapers: list = []
-    if settings.torbox_api_token or os.environ.get("SCRAPER_TORRENTIO_BASE"):
+    if os.environ.get("SCRAPER_TORRENTIO_BASE"):
         scrapers.append(TorrentioScraper(settings.scraper_torrentio_base))
     if not scrapers:
         scrapers.append(MockScraper({}))
@@ -65,8 +68,6 @@ def cmd_resolver(settings: Settings) -> int:
 
 def cmd_vfs(settings: Settings) -> int:
     from .vfs.fs import mount_main
-    if settings.resolver_url.startswith("http://resolver"):
-        settings.resolver_url = "http://127.0.0.1:8282"
     os.makedirs(settings.vfs_mountpoint, exist_ok=True)
     try:
         mount_main(settings.vfs_mountpoint, settings.resolver_url)
@@ -82,8 +83,6 @@ async def cmd_register(settings: Settings, yaml_path: str, url: str | None) -> i
     with open(yaml_path, "r", encoding="utf-8") as fh:
         payload = yaml.safe_load(fh) or {}
     base = url or settings.resolver_url
-    if base.startswith("http://resolver"):
-        base = "http://127.0.0.1:8282"
     created = failed = 0
     async with httpx.AsyncClient(base_url=base, timeout=300.0) as client:
         for item in payload.get("items") or []:
