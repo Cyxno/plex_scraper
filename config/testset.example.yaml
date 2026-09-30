@@ -1,0 +1,60 @@
+# plex_scraper logical item test set (FASE 11)
+# Register with: python -m plex_scraper.cli register config/testset.example.yaml
+# Nothing below depends on a specific episode being scrapable; mock providers
+# in tests supply synthetic candidates.
+
+items:
+  # 1. normal working episode
+  - kind: episode
+    title: Pilot
+    series: Breaking Bad
+    season: 1
+    episode: 1
+    imdb_id: tt0903747
+    tmdb_id: 1396
+    tvdb_id: 81189
+    plex_path: "TV/Breaking Bad/Season 01/Breaking Bad - S01E01.mkv"
+
+  # 2. episode with many 720/1080/2160 candidates
+  - kind: episode
+    title: Winter Is Coming
+    series: Game of Thrones
+    season: 1
+    episode: 1
+    imdb_id: tt0944947
+    tmdb_id: 1399
+    tvdb_id: 121361
+    plex_path: "TV/Game of Thrones/Season 01/Game of Thrones - S01E01.mkv"
+
+  # 3. older movie with multiple available releases
+  - kind: movie
+    title: "Fight Club"
+    year: 1999
+    imdb_id: tt0133093
+    tmdb_id: 550
+    plex_path: "Movies/Fight Club (1999)/Fight Club (1999).mkv"
+
+  # 4. item whose current backing can be force-failed at runtime
+  - kind: movie
+    title: "The Matrix"
+    year: 1999
+    imdb_id: tt0137523
+    tmdb_id: 603
+    plex_path: "Movies/The Matrix (1999)/The Matrix (1999).mkv"
+
+  # 5. HDR/DV/audio scoring
+  - kind: movie
+    title: "Dune: Part Two"
+    year: 2024
+    imdb_id: tt15239678
+    tmdb_id: 693134
+    plex_path: "Movies/Dune Part Two (2024)/Dune Part Two (2024).mkv"
+
+  # Optional (not part of the test contract): uncomment and fill the IMDb id
+  # - kind: episode
+  #   title: ""
+  #   series: MobLand
+  #   season: 2
+  #   episode: 1
+  #   imdb_id: "ttXXXXXXXXXX"
+  #   plex_path: "TV/MobLand/Season 02/MobLand - S02E01.mkv"

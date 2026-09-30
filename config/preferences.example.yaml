@@ -1,0 +1,40 @@
+# plex_scraper scoring preferences
+# Every preference list is ordered: first entry = highest preference.
+# The scorer emits a transparent breakdown per candidate:
+#   score: 98
+#   reasons:
+#     +30 2160p
+#     +15 dolby_vision
+#     ...
+
+resolution:
+  prefer: [2160p, 1080p, 720p, 480p]
+
+video:
+  prefer: [dolby_vision, hdr10, sdr]
+
+audio:
+  prefer: [truehd_atmos, ddp_atmos, truehd, ddp, dts_hd, flac, pcm]
+
+language:
+  prefer: [english]
+
+release:
+  prefer: [web-dl, remux, bluray, webrip]
+
+# Hard rejects (candidate never selected; reason recorded)
+exclude:
+  - 3d
+  - cam
+  - telesync
+  - hardcoded_subs
+  - low_seeders_unverified
+
+limits:
+  max_size_gb: 100
+
+# Bonus applied on top of preference points when TorBox reports the torrent
+# as cached (instant availability) or fully downloaded.
+bonuses:
+  cached: 18
+  seeders_top10: 5

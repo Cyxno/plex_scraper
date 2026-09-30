@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# local state & secrets
+.env
+*.db
+*.db-wal
+*.db-shm
+data/
+config/preferences.yaml
+config/testset.yaml

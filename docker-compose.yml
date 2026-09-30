@@ -1,0 +1,50 @@
+name: plex-scraper
+
+services:
+  resolver:
+    build: .
+    image: plex-scraper:local
+    command: ["resolver"]
+    env_file: .env
+    environment:
+      RESOLVER_BIND: 0.0.0.0:8282
+    volumes:
+      - ./config:/config:ro
+      - /mnt/cache/appdata/plex-scraper/data:/data
+    ports:
+      # PoC: control API stays on localhost of the Unraid host.
+      - "127.0.0.1:8282:8282"
+    restart: unless-stopped
+
+  vfs:
+    image: plex-scraper:local
+    build: .
+    command: ["vfs"]
+    env_file: .env
+    depends_on:
+      - resolver
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse:/dev/fuse
+    volumes:
+      # Requires the host path to be on a *shared* mount (Unraid: /mnt/cache
+      # is shared by default). The FUSE mount propagates from this container
+      # to the host path, where Plex can bind it.
+      - type: bind
+        source: /mnt/cache/appdata/plex-scraper/vfs
+        target: /mnt/plex-scraper
+        bind:
+          propagation: rshared
+    restart: unless-stopped
+
+  # Example: attach Plex read-only to the propagated mount.
+  # Add to YOUR existing Plex container definition instead:
+  #
+  #   services:
+  #     plex:
+  #       volumes:
+  #         - type: bind
+  #           source: /mnt/cache/appdata/plex-scraper/vfs
+  #           target: /media/plex-scraper
+  #           read_only: true

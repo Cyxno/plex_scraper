@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install FUSE (integration tests use it when available)
+        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run test suite
+        run: pytest -q

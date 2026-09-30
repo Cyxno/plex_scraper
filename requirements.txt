@@ -1,0 +1,5 @@
+pyfuse3>=3.4.0,<4
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+httpx>=0.27,<1
+PyYAML>=6.0,<7
