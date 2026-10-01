@@ -24,10 +24,15 @@ _SIZE = re.compile(r"💾\s*([\d.]+)\s*(GB|MB|TB)", re.I)
 class TorrentioScraper(Scraper):
     name = "torrentio"
 
+    # Torrentio's public instances sit behind Cloudflare: the default
+    # python-httpx UA gets a 403, an addon-client UA is the honest identity.
+    DEFAULT_UA = "Stremio/5.0 (plex-scraper; https://github.com/Cyxno/plex_scraper)"
+
     def __init__(self, base_url: str, client: httpx.AsyncClient | None = None,
-                 timeout: float = 20.0):
+                 timeout: float = 20.0, user_agent: str | None = None):
         self.base = base_url.rstrip("/")
-        self._client = client or httpx.AsyncClient(timeout=timeout)
+        self._client = client or httpx.AsyncClient(
+            timeout=timeout, headers={"User-Agent": user_agent or self.DEFAULT_UA})
         self._pace = asyncio.Lock()
         self._last_request = 0.0
 

@@ -135,8 +135,28 @@ class Resolver:
               candidate_count=len(candidates), ranked_count=len(ranked),
               current_generation=item.generation)
 
+        # cached-first ordering: cached candidates are instantly verifiable;
+        # uncached ones need a provider add (createtorrent, 60/h account cap)
+        # plus download wait, so they run afterwards and budget-limited.
+        ranked = self._cached_first(ranked)
+
+        # candidates marked temporary-bad are skipped BEFORE the provider-add
+        # budget is considered, so dead releases never block fresh ones
+        bad_hashes = {s.info_hash for s in await self.store.list_sources(item.id)
+                      if s.is_bad()}
+
         fallback_count = 0
+        provider_adds = 0
         for cand, _score in ranked:
+            if cand.info_hash in bad_hashes:
+                continue
+            if cand.info_hash not in self._cached_hashes():
+                if provider_adds >= self.s.max_provider_adds_per_resolve:
+                    await self._evt("resolution_skip_uncached", item=item,
+                                    hash=cand.info_hash,
+                                    reason="provider_add_budget_exhausted")
+                    continue
+                provider_adds += 1
             t0 = time.monotonic()
             source = await self._validate_candidate(item, cand)
             validation_latency = time.monotonic() - t0
@@ -163,6 +183,18 @@ class Resolver:
               candidate_count=len(candidates), fallback_count=fallback_count,
               resolution_latency=round(time.monotonic() - started, 3))
         return None
+
+    def _cached_hashes(self) -> set:
+        hashes = set()
+        for value in self.caches.checkcached._data.values():
+            hashes.update((value.value or {}).keys())
+        return hashes
+
+    def _cached_first(self, ranked):
+        cached, uncached = [], []
+        for entry in ranked:
+            (cached if entry[0].info_hash in self._cached_hashes() else uncached).append(entry)
+        return cached + uncached
 
     async def _gather_candidates(self, item: m.MediaItem) -> list[TorrentCandidate]:
         key = f"{item.kind}:{item.imdb_id}:{item.season}:{item.episode}"
@@ -250,6 +282,15 @@ class Resolver:
                 raise NotReadyError("torrent has no files")
             src.file_id, meta = choice
             src.file_name, known_size = meta["name"], int(meta["size"])
+            # release-size sanity: guards against pack .nfo picks and
+            # mislabeled sample/segment releases (torrentio noise)
+            min_bytes = self.s.min_media_movie_mb if item.kind == "movie" \
+                else self.s.min_media_episode_mb
+            min_media = min_bytes << 20
+            if known_size and known_size < min_media:
+                raise NotReadyError(
+                    f"release too small for {item.kind} "
+                    f"({known_size / (1 << 20):.0f}MB) - likely mislabeled")
             src.size = known_size or src.size
             url = await self._link_for(src, torrent)
             probe = self.s.validation_probe_bytes
@@ -408,7 +449,12 @@ class Resolver:
     async def _fail(self, src: m.Source, reason: str) -> bool:
         src.state = m.SourceState.FAILED.value
         src.failure_count += 1
-        src.bad_until = self._bad_until(src.failure_count)
+        bad_until = self._bad_until(src.failure_count)
+        if reason.startswith("debug"):
+            # operator-injected failure: treat as a long-lived verdict so the
+            # next playback demonstrably picks a DIFFERENT release
+            bad_until = max(bad_until, m.now() + 3600.0)
+        src.bad_until = bad_until
         await self.store.update_source(src)
         item = await self.store.get_item(src.media_item_id)
         if item is not None:

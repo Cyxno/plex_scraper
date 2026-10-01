@@ -42,11 +42,7 @@ def build_resolver(settings: Settings) -> Resolver:
             "(offline demo, synthetic bytes, no real content)")
         provider = seeded_provider()
         return Resolver(settings, store, provider, seeded_scrapers(), scorer, caches)
-    scrapers: list = []
-    if os.environ.get("SCRAPER_TORRENTIO_BASE"):
-        scrapers.append(TorrentioScraper(settings.scraper_torrentio_base))
-    if not scrapers:
-        scrapers.append(MockScraper({}))
+    scrapers: list = [TorrentioScraper(settings.scraper_torrentio_base)]
     return Resolver(settings, store, provider, scrapers, scorer, caches)
 
 

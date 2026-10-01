@@ -16,6 +16,17 @@ def _bool(name: str, default: bool = False) -> bool:
     return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _read_secret_file(path: str) -> str:
+    """Docker-secrets / Unraid keyfile support: token never lives in env."""
+    if not path:
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
 @dataclass
 class Settings:
     # resolver
@@ -51,6 +62,10 @@ class Settings:
     stream_readahead_bytes: int = 8388608
 
     # state machine budgets
+    max_provider_adds_per_resolve: int = 1
+    # release-size sanity (guards pack .nfo picks + mislabeled fake releases)
+    min_media_movie_mb: int = 268
+    min_media_episode_mb: int = 64
     resolve_candidate_timeout: float = 120.0
     torrent_ready_poll_interval: float = 8.0
     torrent_ready_max_polls: int = 10
@@ -61,7 +76,9 @@ class Settings:
             resolver_bind=os.environ.get("RESOLVER_BIND", cls.resolver_bind),
             debug=_bool("DEBUG", False),
             log_level=os.environ.get("LOG_LEVEL", cls.log_level),
-            torbox_api_token=os.environ.get("TORBOX_API_TOKEN", ""),
+            torbox_api_token=(
+                os.environ.get("TORBOX_API_TOKEN", "").strip()
+                or _read_secret_file(os.environ.get("TORBOX_API_TOKEN_FILE", ""))),
             torbox_base_url=os.environ.get("TORBOX_BASE_URL", cls.torbox_base_url),
             scraper_torrentio_base=os.environ.get(
                 "SCRAPER_TORRENTIO_BASE", cls.scraper_torrentio_base
@@ -87,4 +104,8 @@ class Settings:
                 os.environ.get("TORBOX_POLL_INTERVAL", cls.torrent_ready_poll_interval)
             ),
             torrent_ready_max_polls=_int("TORBOX_MAX_POLLS", cls.torrent_ready_max_polls),
+            max_provider_adds_per_resolve=_int(
+                "MAX_PROVIDER_ADDS_PER_RESOLVE", cls.max_provider_adds_per_resolve),
+            min_media_movie_mb=_int("MIN_MEDIA_MOVIE_MB", cls.min_media_movie_mb),
+            min_media_episode_mb=_int("MIN_MEDIA_EPISODE_MB", cls.min_media_episode_mb),
         )

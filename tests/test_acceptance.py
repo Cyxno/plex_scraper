@@ -27,8 +27,8 @@ RESULTS = [
 ]
 
 SPECS = {
-    "sourceA": {"size": 4_000_000, "validate_failures_left": 1},   # fails once, then works
-    "sourceB": {"size": 3_000_000, "validate_failures_left": 1},
+    "sourceA": {"size": 4_000_000, "cached": True, "validate_failures_left": 1},   # fails once, then works
+    "sourceB": {"size": 3_000_000, "cached": True, "validate_failures_left": 1},
     "sourceC": {"size": 2_000_000, "cached": True},
 }
 
@@ -61,8 +61,8 @@ async def test_acceptance_score98_fail_score95_fail_score88_pass(settings, score
     # A and B carry a temporary-bad TTL from their bootstrap failures; wait
     # for it to expire (backoff expiry is what allows retrying them)
     import asyncio
-    await asyncio.sleep(settings.cache_bad_ttl + 0.05)
-    ctx2 = await engine.open_handle(item.id)
+    await asyncio.sleep(0.15)   # bootstrap-failure TTL (0.05s) expires; C is
+    ctx2 = await engine.open_handle(item.id)  # operator-failed -> bad for 1h
     assert ctx2.source.info_hash == "sourceA"
     assert ctx2.session.generation == 2
 

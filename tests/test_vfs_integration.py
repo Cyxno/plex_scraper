@@ -93,7 +93,8 @@ def stack(tmp_path_factory):
              "got1080": {"cached": True, "size": 6 << 20},
              "got720": {"cached": True, "size": 4 << 20}}
     settings = Settings(db_path=str(tmp / "state.db"), debug=True,
-                        cache_bad_ttl=3600, stream_readahead_bytes=1 << 20)
+                        cache_bad_ttl=3600, stream_readahead_bytes=1 << 20,
+                        min_media_movie_mb=0, min_media_episode_mb=0)
     from conftest import got_results
     engine, provider, _ = make_engine(settings, specs, {RESULTS_KEY: got_results()})
     http = _HttpServer(create_app(engine, settings))

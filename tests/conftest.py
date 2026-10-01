@@ -26,7 +26,9 @@ def settings(tmp_path):
     s = Settings(db_path=str(tmp_path / "state.db"), debug=True,
                  cache_bad_ttl=0.05,          # tests control bad_until explicitly
                  cache_bad_ttl_max=0.5,
-                 validation_probe_bytes=1024)
+                 validation_probe_bytes=1024,
+                 min_media_movie_mb=0,        # mock fixtures use tiny content
+                 min_media_episode_mb=0)
     return s
 
 

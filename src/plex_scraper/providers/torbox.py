@@ -16,6 +16,7 @@ them) but not documented; the resolver's validator probes 206 per source.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 
 import httpx
@@ -187,26 +188,42 @@ class TorboxProvider(DebridProvider):
                                    data={"magnet": magnet, "seed": 3, "allow_zip": "false"})
         created = body.get("data") or {}
         torrent_id = created.get("torrent_id") or created.get("id")
-        for attempt in range(self.s.torbox_max_polls):
-            await asyncio.sleep(self.s.torbox_ready_poll_interval)
+        for attempt in range(self.s.torrent_ready_max_polls):
+            await asyncio.sleep(self.s.torrent_ready_poll_interval)
             detail = await self._request("GET", "/torrents/mylist", params={"id": torrent_id})
             torrent = detail.get("data") or {}
             if torrent.get("download_finished") or torrent.get("cached"):
                 return torrent
         raise NotReadyError(
-            f"torrent {info_hash} not ready after {self.s.torbox_max_polls} polls")
+            f"torrent {info_hash} not ready after {self.s.torrent_ready_max_polls} polls")
+
+    _SE_EP = re.compile(r"S\d{1,2}E\d{1,3}", re.I)
+    MIN_MEDIA_BYTES = 20 << 20
 
     def pick_file(self, torrent: ProviderTorrent, file_name_hint: str | None = None) -> tuple[int, dict] | None:
-        """Choose the right file inside a torrent: hint match, else largest video."""
+        """Choose the right file inside a torrent.
+
+        Packs (season bundles) carry many files and a scraper's fileIdx=0 can
+        point at an .nfo. Order: SxxEyy match on the hint, then hint substring,
+        then largest video file; never accept a file below MIN_MEDIA_BYTES
+        while bigger video files exist.
+        """
         if not torrent.files:
             return None
+        videos = [(fid, meta) for fid, meta in sorted(torrent.files.items())
+                  if meta["name"].lower().endswith(VIDEO_EXTS)
+                  and meta["size"] >= self.MIN_MEDIA_BYTES]
+        pool = videos or list(torrent.files.items())
         if file_name_hint:
             hint = file_name_hint.lower()
-            for fid, meta in sorted(torrent.files.items()):
-                if meta["name"].lower().endswith(hint) or hint in meta["name"].lower():
+            se = self._SE_EP.search(hint)
+            if se:
+                for fid, meta in pool:
+                    if se.group(0).lower() in meta["name"].lower():
+                        return fid, meta
+            for fid, meta in pool:
+                if hint in meta["name"].lower() or meta["name"].lower().endswith(hint):
                     return fid, meta
-        videos = [(fid, meta) for fid, meta in torrent.files.items()
-                  if meta["name"].lower().endswith(VIDEO_EXTS)]
-        if not videos:
-            videos = list(torrent.files.items())
-        return max(videos, key=lambda kv: kv[1]["size"])
+        if videos:
+            return max(videos, key=lambda kv: kv[1]["size"])
+        return max(pool, key=lambda kv: kv[1]["size"])
