@@ -19,8 +19,8 @@ import httpx
 import pytest
 import uvicorn
 
-from plex_scraper.api.app import create_app
-from plex_scraper.providers.mock import synthetic_bytes
+from plex_scraper.resolver.api.app import create_app
+from plex_scraper.scraper.providers.mock import synthetic_bytes
 from plex_scraper.vfs.fs import mount_main
 
 from conftest import make_engine
@@ -88,7 +88,7 @@ def stack(tmp_path_factory):
     if not FUSE_OK:
         pytest.skip("no /dev/fuse or fusermount3 available")
     tmp = tmp_path_factory.mktemp("vfs")
-    from plex_scraper.config import Settings
+    from plex_scraper.common.config import Settings
     specs = {"got2160dv": {"cached": True, "size": 8 << 20},
              "got1080": {"cached": True, "size": 6 << 20},
              "got720": {"cached": True, "size": 4 << 20}}

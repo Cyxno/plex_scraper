@@ -50,3 +50,38 @@ services:
   #           source: /mnt/cache/appdata/plex-scraper/vfs
   #           target: /media/plex-scraper
   #           read_only: true
+
+  scraper:
+    image: plex-scraper:local
+    command: ["scraper"]
+    env_file: .env
+    environment:
+      SCRAPER_BIND: 0.0.0.0:8283
+      TORBOX_API_TOKEN_FILE: /run/secrets/torbox_key
+    secrets:
+      - torbox_key
+    ports:
+      - "127.0.0.1:18283:8283"
+    restart: unless-stopped
+
+  web:
+    image: plex-scraper:local
+    command: ["web"]
+    environment:
+      WEB_BIND: 0.0.0.0:8285
+      RESOLVER_URL: http://resolver:8282
+      MIG_DB: /state/migration-state.sqlite
+    volumes:
+      - /mnt/cache/appdata/plex-scraper/migration:/state:ro
+      - /mnt/vm_storage/symlinks:/mnt/vm_storage/symlinks:ro
+      - /mnt/remote/nzbdav:/mnt/remote/nzbdav:ro
+      - /mnt/debrid:/mnt/debrid:ro
+    ports:
+      - "127.0.0.1:8285:8285"
+    depends_on:
+      - resolver
+    restart: unless-stopped
+
+secrets:
+  torbox_key:
+    file: ./secrets/torbox_key

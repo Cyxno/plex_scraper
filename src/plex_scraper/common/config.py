@@ -58,6 +58,8 @@ class Settings:
 
     # vfs
     vfs_mountpoint: str = "/mnt/plex-scraper"
+    # diagnostics web GUI
+    mig_db_path: str = "/mnt/user/appdata/plex-scraper/migration/migration-state.sqlite"
     resolver_url: str = "http://127.0.0.1:8282"
     stream_readahead_bytes: int = 8388608
 
@@ -98,6 +100,7 @@ class Settings:
             upstream_concurrency=_int("UPSTREAM_CONCURRENCY", cls.upstream_concurrency),
             validation_probe_bytes=_int("VALIDATION_PROBE_BYTES", cls.validation_probe_bytes),
             vfs_mountpoint=os.environ.get("VFS_MOUNTPOINT", cls.vfs_mountpoint),
+            mig_db_path=os.environ.get("MIG_DB", cls.mig_db_path),
             resolver_url=os.environ.get("RESOLVER_URL", cls.resolver_url),
             stream_readahead_bytes=_int("STREAM_READAHEAD_BYTES", cls.stream_readahead_bytes),
             torrent_ready_poll_interval=float(

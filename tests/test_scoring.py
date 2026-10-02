@@ -1,5 +1,5 @@
 """FASE 17 unit tests: scoring, exclusions, ranking."""
-from plex_scraper.scoring.release_parser import parse_release, parse_size_bytes
+from plex_scraper.common.scoring.release_parser import parse_release, parse_size_bytes
 
 from conftest import cand, got_key, got_results
 

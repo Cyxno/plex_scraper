@@ -105,3 +105,11 @@ library-wide repair · DUMB compatibility · web UI · local media storage ·
 ## License
 
 MIT
+
+## Rollen & diagnostics GUI (oct 2026)
+
+Eén image, vier process-roles: `resolver`, `vfs`, `scraper` (optionele
+standalone scraper-API), `web` (read-only diagnostics GUI). Zie
+[README-ROLES.md](README-ROLES.md). Diagnostics GUI: `http://<host>:8285/` —
+health, resolver totals, queue, failures en per-item playback-trace
+(resolver → symlink → VFS → backend → read-test) met retry-acties.

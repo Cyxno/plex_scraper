@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 
-from ..scrapers.base import TorrentCandidate
+from plex_scraper.scraper.scrapers.base import TorrentCandidate
 from .mock import MockProvider
 
 # info_hash -> provider spec (sizes differ so generation switches are visible)

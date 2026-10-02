@@ -7,8 +7,8 @@ RESULT:   selected C, playback bytes valid, logical path unchanged.
           After C is force-failed and recovers, A serves as generation N+1
           behind the SAME path.
 """
-from plex_scraper.domain import models as m
-from plex_scraper.providers.mock import synthetic_bytes
+from plex_scraper.common.domain import models as m
+from plex_scraper.scraper.providers.mock import synthetic_bytes
 
 from conftest import cand, make_engine
 

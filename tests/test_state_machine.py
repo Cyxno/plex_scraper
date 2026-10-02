@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from plex_scraper.domain import models as m
+from plex_scraper.common.domain import models as m
 
 from conftest import cand, got_key, got_results, make_engine
 
@@ -113,7 +113,7 @@ async def test_candidate_cache_ttl(settings, scorer, got_item):
             calls["n"] += 1
             return got_results()
 
-    from plex_scraper.providers.mock import MockProvider
+    from plex_scraper.scraper.providers.mock import MockProvider
     from plex_scraper.resolver.caches import CacheSet
     from plex_scraper.resolver.engine import Resolver
     from plex_scraper.resolver.store import Store

@@ -1,7 +1,7 @@
 """Wire-format helpers for API responses."""
 from __future__ import annotations
 
-from ..domain import models as m
+from plex_scraper.common.domain import models as m
 
 
 def item_out(item: m.MediaItem) -> dict:

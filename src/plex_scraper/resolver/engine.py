@@ -13,12 +13,12 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 
-from ..config import Settings
-from ..domain import models as m
-from ..log import event
-from ..providers.base import DebridProvider, NotReadyError, ProviderError
-from ..scoring.release_parser import parse_release
-from ..scrapers.base import Scraper, TorrentCandidate
+from plex_scraper.common.config import Settings
+from plex_scraper.common.domain import models as m
+from plex_scraper.common.log import event
+from plex_scraper.scraper.providers.base import DebridProvider, NotReadyError, ProviderError
+from plex_scraper.common.scoring.release_parser import parse_release
+from plex_scraper.scraper.scrapers.base import Scraper, TorrentCandidate
 from .caches import CacheSet
 from .store import Store
 from .stream import RangeReader

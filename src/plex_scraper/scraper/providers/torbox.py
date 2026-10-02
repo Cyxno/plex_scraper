@@ -21,7 +21,7 @@ import time
 
 import httpx
 
-from ..log import event
+from plex_scraper.common.log import event
 from .base import DebridProvider, LinkExpiredError, NotReadyError, ProviderError, ProviderTorrent
 
 VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov", ".mpg", ".webm")

@@ -8,14 +8,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plex_scraper.config import Settings  # noqa: E402
-from plex_scraper.providers.mock import MockProvider  # noqa: E402
+from plex_scraper.common.config import Settings  # noqa: E402
+from plex_scraper.scraper.providers.mock import MockProvider  # noqa: E402
 from plex_scraper.resolver.caches import CacheSet  # noqa: E402
 from plex_scraper.resolver.engine import Resolver  # noqa: E402
 from plex_scraper.resolver.store import Store  # noqa: E402
-from plex_scraper.scoring.engine import Scorer  # noqa: E402
-from plex_scraper.scrapers.base import TorrentCandidate  # noqa: E402
-from plex_scraper.scrapers.mock import MockScraper  # noqa: E402
+from plex_scraper.common.scoring.engine import Scorer  # noqa: E402
+from plex_scraper.scraper.scrapers.base import TorrentCandidate  # noqa: E402
+from plex_scraper.scraper.scrapers.mock import MockScraper  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PREFS = REPO_ROOT / "config" / "preferences.example.yaml"

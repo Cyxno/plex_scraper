@@ -1,6 +1,6 @@
 """FASE 17: session pinning + concurrent sessions + bytes correctness."""
-from plex_scraper.domain import models as m
-from plex_scraper.providers.mock import synthetic_bytes
+from plex_scraper.common.domain import models as m
+from plex_scraper.scraper.providers.mock import synthetic_bytes
 
 from conftest import got_key, got_results, make_engine
 
@@ -25,7 +25,7 @@ async def test_mid_session_failure_does_not_switch_pinned_source(settings, score
     handle = ctx.session.handle
     gen_before = ctx.session.generation
 
-    from plex_scraper.providers.base import ProviderError
+    from plex_scraper.scraper.providers.base import ProviderError
     async def explode(source_id, offset, length):
         raise ProviderError("upstream gone")
     engine.upstream_read = explode

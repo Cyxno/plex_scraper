@@ -2,7 +2,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from plex_scraper.api.app import create_app
+from plex_scraper.resolver.api.app import create_app
 
 from conftest import got_key, got_results, make_engine
 
@@ -87,8 +87,8 @@ def test_debug_endpoints_gated(settings, scorer, got_item):
 
 def test_session_open_unresolved_returns_503(settings, scorer):
     from plex_scraper.resolver.caches import CacheSet
-    from plex_scraper.providers.mock import MockProvider
-    from plex_scraper.scrapers.mock import MockScraper
+    from plex_scraper.scraper.providers.mock import MockProvider
+    from plex_scraper.scraper.scrapers.mock import MockScraper
     from plex_scraper.resolver.store import Store
     from plex_scraper.resolver.engine import Resolver
     engine = Resolver(settings, Store(settings.db_path), MockProvider(), [MockScraper({})],

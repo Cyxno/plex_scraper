@@ -1,4 +1,12 @@
-"""CLI: `resolver`, `vfs`, `register` (FASE 1/18 entrypoints)."""
+"""plex_scraper role dispatcher — one image, four process-roles.
+
+  resolver  — FastAPI: state machine, scoring, providers, stream proxy
+  vfs       — pyfuse3 FUSE mount (stable Plex path)
+  scraper   — standalone HTTP service exposing scraper search/score (optional
+              diagnostics role; the resolver normally uses scrapers in-process)
+  web       — read-only diagnostics GUI (playback troubleshooting)
+  register  — CLI: register logical items from YAML
+"""
 from __future__ import annotations
 
 import argparse
@@ -10,39 +18,36 @@ import sys
 import httpx
 import uvicorn
 
-from .api.app import create_app
-from .config import Settings
-from .log import setup_logging
-from .providers.mock import MockProvider
-from .providers.torbox import TorboxProvider
-from .resolver.caches import CacheSet
-from .resolver.engine import Resolver
-from .resolver.store import Store
-from .scoring.engine import Scorer
-from .scrapers.mock import MockScraper
-from .scrapers.torrentio import TorrentioScraper
+from .common.config import Settings
+from .common.log import setup_logging
 
 
-def build_resolver(settings: Settings) -> Resolver:
-    store = Store(settings.db_path)
+def build_resolver(settings: Settings):
+    from .resolver.caches import CacheSet
+    from .resolver.engine import Resolver
+    from .resolver.store import Store
+    from .common.scoring.engine import Scorer
+    from .scraper.providers.demo_seed import seeded_provider, seeded_scrapers
+    from .scraper.providers.torbox import TorboxProvider
+    from .scraper.scrapers.torrentio import TorrentioScraper
+
     os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
+    store = Store(settings.db_path)
     scorer = Scorer.from_yaml(_preferences_path(settings))
     caches = CacheSet(
         candidates_ttl=settings.cache_candidates_ttl,
         checkcached_ttl=settings.cache_checkcached_ttl,
         link_ttl=settings.cache_link_ttl,
     )
-    if settings.torbox_api_token or os.environ.get("TORBOX_API_TOKEN"):
+    if settings.torbox_api_token:
         provider = TorboxProvider(settings)
+        scrapers = [TorrentioScraper(settings.scraper_torrentio_base)]
     else:
-        # PoC convenience: run without a token -> seeded mocks (demo/test only)
-        from .providers.demo_seed import seeded_provider, seeded_scrapers
+        # PoC/demo convenience: no token -> seeded mocks (synthetic bytes)
         logging.getLogger("resolver").warning(
-            "TORBOX_API_TOKEN not set — using seeded mock provider/scraper "
-            "(offline demo, synthetic bytes, no real content)")
+            "TORBOX_API_TOKEN not set - using seeded mock provider/scraper")
         provider = seeded_provider()
-        return Resolver(settings, store, provider, seeded_scrapers(), scorer, caches)
-    scrapers: list = [TorrentioScraper(settings.scraper_torrentio_base)]
+        scrapers = seeded_scrapers()
     return Resolver(settings, store, provider, scrapers, scorer, caches)
 
 
@@ -54,11 +59,33 @@ def _preferences_path(settings: Settings) -> str:
     raise FileNotFoundError(f"no preferences file found in {settings.config_dir}")
 
 
-def cmd_resolver(settings: Settings) -> int:
-    app = create_app(build_resolver(settings), settings)
-    host, _, port = settings.resolver_bind.rpartition(":")
+def _uvicorn(app, bind: str):
+    host, _, port = bind.rpartition(":")
     uvicorn.run(app, host=host or "0.0.0.0", port=int(port or 8282),
-                log_level=settings.log_level, access_log=False)
+                log_level=os.environ.get("LOG_LEVEL", "info"), access_log=False)
+
+
+def cmd_resolver(settings: Settings) -> int:
+    from .api_compat import resolver_app
+    _uvicorn(resolver_app(settings), settings.resolver_bind)
+    return 0
+
+
+def cmd_scraper(settings: Settings) -> int:
+    """Standalone scraper role: HTTP service for candidate search + scoring."""
+    from .scraper.service import create_scraper_app
+    app = create_scraper_app(settings)
+    bind = os.environ.get("SCRAPER_BIND", "0.0.0.0:8283")
+    _uvicorn(app, bind)
+    return 0
+
+
+def cmd_web(settings: Settings) -> int:
+    """Diagnostics GUI role."""
+    from .web.app import create_web_app
+    app = create_web_app(settings)
+    bind = os.environ.get("WEB_BIND", "0.0.0.0:8285")
+    _uvicorn(app, bind)
     return 0
 
 
@@ -76,6 +103,8 @@ def cmd_vfs(settings: Settings) -> int:
 async def cmd_register(settings: Settings, yaml_path: str, url: str | None) -> int:
     import yaml
 
+    from .common.log import event
+
     with open(yaml_path, "r", encoding="utf-8") as fh:
         payload = yaml.safe_load(fh) or {}
     base = url or settings.resolver_url
@@ -88,10 +117,11 @@ async def cmd_register(settings: Settings, yaml_path: str, url: str | None) -> i
                     body = resp.json()
                     print(f"registered {item.get('plex_path')} -> {body['id']} "
                           f"status={body['status']} generation={body['generation']}")
+                    event("cli_registered", plex_path=item.get("plex_path"))
                     created += 1
                 else:
-                    print(f"FAILED {item.get('plex_path')}: HTTP {resp.status_code} {resp.text[:200]}",
-                          file=sys.stderr)
+                    print(f"FAILED {item.get('plex_path')}: HTTP {resp.status_code} "
+                          f"{resp.text[:200]}", file=sys.stderr)
                     failed += 1
             except httpx.HTTPError as exc:
                 print(f"FAILED {item.get('plex_path')}: {exc!r}", file=sys.stderr)
@@ -101,13 +131,16 @@ async def cmd_register(settings: Settings, yaml_path: str, url: str | None) -> i
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="plex-scraper")
-    parser.add_argument("--url", help="resolver URL for register (default $RESOLVER_URL or localhost)")
+    parser = argparse.ArgumentParser(
+        prog="plex-scraper", description="one image, four roles")
+    parser.add_argument("--url", help="resolver URL for register")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("resolver", help="run the resolver HTTP API")
-    sub.add_parser("vfs", help="run the FUSE mount")
+    sub.add_parser("resolver", help="run the resolver HTTP API (production role)")
+    sub.add_parser("scraper", help="run the standalone scraper service (optional role)")
+    sub.add_parser("vfs", help="run the FUSE mount (production role)")
+    sub.add_parser("web", help="run the diagnostics GUI (read-only)")
     reg = sub.add_parser("register", help="register logical items from YAML")
-    reg.add_argument("yaml", help="path to items YAML (e.g. config/testset.example.yaml)")
+    reg.add_argument("yaml", help="path to items YAML")
 
     args = parser.parse_args(argv)
     settings = Settings.from_env()
@@ -115,8 +148,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "resolver":
         return cmd_resolver(settings)
+    if args.command == "scraper":
+        return cmd_scraper(settings)
     if args.command == "vfs":
         return cmd_vfs(settings)
+    if args.command == "web":
+        return cmd_web(settings)
     if args.command == "register":
         return asyncio.run(cmd_register(settings, args.yaml, args.url))
     return 2

@@ -7,7 +7,7 @@ import sqlite3
 import threading
 from typing import Any, Callable
 
-from ..domain import models as m
+from plex_scraper.common.domain import models as m
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS media_items (

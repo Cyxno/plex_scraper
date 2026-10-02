@@ -9,7 +9,7 @@ from __future__ import annotations
 import yaml
 from dataclasses import dataclass
 
-from ..domain.models import ScoreBreakdown, ScoreLine
+from plex_scraper.common.domain.models import ScoreBreakdown, ScoreLine
 from .release_parser import ParsedRelease, parse_release, parse_size_bytes
 
 _POSITIONAL = [30.0, 20.0, 10.0]          # resolution

@@ -11,9 +11,9 @@ import time
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from .. import __version__
-from ..domain import models as m
-from ..resolver.engine import Resolver, UnresolvedError
+from plex_scraper import __version__
+from plex_scraper.common.domain import models as m
+from plex_scraper.resolver.engine import Resolver, UnresolvedError
 from .schemas import item_out, source_out
 
 START_TIME = time.time()
@@ -46,7 +46,7 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
     async def _unresolved(_req: Request, exc: UnresolvedError):
         return JSONResponse(status_code=503, content={"error": str(exc)})
 
-    from ..providers.base import ProviderError
+    from plex_scraper.scraper.providers.base import ProviderError
 
     @app.exception_handler(ProviderError)
     async def _provider(_req: Request, exc: ProviderError):
