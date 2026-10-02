@@ -60,6 +60,7 @@ class HealthSweeper:
         self._interval = 3600.0 / max(items_per_hour, 1)
         self._running = False
         self._task = None
+        self._sweep_lock = asyncio.Lock()
         self._init_db()
 
     def _init_db(self):
@@ -236,7 +237,15 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
 
     # ---------------------------------------------------------- sweep cycle
     async def sweep(self):
-        """Eén sweep-cyclus: check een batch items."""
+        """Eén sweep-cyclus: check een batch items.
+
+        Geserialiseerd via lock: de achtergrondloop en check-now kunnen
+        niet door elkaar heen checken (cursor wordt anders dubbel gelezen).
+        """
+        async with self._sweep_lock:
+            await self._sweep_locked()
+
+    async def _sweep_locked(self):
         batch = await self._next_batch(min(self.items_per_hour, 50))
         if not batch:
             return
