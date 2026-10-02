@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>plex_scraper diagnostics</title>
+<style>
+:root{--bg:#14161a;--panel:#1c1f24;--fg:#d7dae0;--dim:#8b919b;--green:#4caf50;--red:#ef5350;--amber:#ffb74d;--blue:#64b5f6;--line:#2a2e35}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:13px/1.45 ui-monospace,'Cascadia Mono','Segoe UI',monospace;margin:0;padding:14px}
+h1{font-size:15px;margin:0 0 10px;color:var(--blue)}
+h3{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin:0 0 8px}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin-bottom:10px;overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+td,th{padding:3px 8px;text-align:left;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:500}
+.ok{color:var(--green)}.bad{color:var(--red)}.warn{color:var(--amber)}.muted{color:var(--dim)}
+.kpi{display:inline-block;background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:6px 12px;margin:2px 4px 2px 0}
+.kpi b{font-size:16px}.kpi span{color:var(--dim);font-size:11px}
+.alert{border:1px solid var(--amber);background:#2a2416;color:var(--amber);border-radius:6px;padding:8px 12px;margin-bottom:10px}
+button{background:#2a2e35;color:var(--fg);border:1px solid #3a3f47;border-radius:4px;padding:4px 10px;cursor:pointer}
+input{background:var(--bg);color:var(--fg);border:1px solid #3a3f47;border-radius:4px;padding:4px 8px}
+li{list-style:none;padding:7px 0;border-bottom:1px solid var(--line)}
+ul{padding:0;margin:0}
+.badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:11px;margin-right:4px}
+.badge.ok{background:#1b3a1b;color:var(--green)}
+.badge.bad{background:#3a1b1b;color:var(--red)}
+.badge.warn{background:#3a2e1b;color:var(--amber)}
+.badge.info{background:#1b2a3a;color:var(--blue)}
+.ff{color:var(--red);font-weight:700}
+@media(max-width:700px){td,th{white-space:normal}}
+</style></head><body>
+<h1>plex_scraper diagnostics</h1>
+<p><a href="/">summary</a> · trace: <input id="rk" placeholder="ratingKey" size="12"><button onclick="location='./ui/trace/'+document.getElementById('rk').value">trace</button></p>
+<div id="alert"></div>
+<div id="rh" class="panel"><h3>current library health</h3>loading...</div>
+<div id="mh" class="panel"><h3>migration history</h3>loading...</div>
+<div class="panel"><h3>mounts</h3><div id="m"></div></div>
+<div class="panel"><h3>worker verify</h3><div id="wv"></div></div>
+<div class="panel"><h3>failure-classificatie</h3><div id="fc"></div></div>
+<div class="panel"><h3>actuele failures</h3><div id="f"></div></div>
+<script>
+function esc(s){if(s===null||s===undefined)return'\u2014';return String(s).replace(/</g,'\u0026lt;')}
+async function load(){
+const s=await(await fetch('./api/summary')).json();
+const rh=s.resolver_health||{};
+const mh=s.migration_history||{};
+let rhH='<table><tr><th>state</th><th>count</th></tr>';
+rhH+='<tr><td class="ok">READY</td><td>'+(rh.READY??'\u2014')+'</td></tr>';
+rhH+='<tr><td class="bad">NO_SOURCE</td><td>'+(rh.NO_SOURCE??'\u2014')+'</td></tr>';
+rhH+='<tr><th>TOTAL</th><td>'+(rh.TOTAL??'\u2014')+'</td></tr></table>';
+if(rh.last_ok_resolve)rhH+='<p class="muted">last OK: '+new Date(rh.last_ok_resolve.ts*1000).toLocaleTimeString()+'</p>';
+if(rh.last_error)rhH+='<p class="warn">last error: '+esc(rh.last_error.kind||'')+'</p>';
+document.getElementById('rh').innerHTML=rhH;
+const alerts=[];
+if((rh.NO_SOURCE||0)>0)alerts.push(rh.NO_SOURCE+' NO_SOURCE');
+if((mh.FAILED_RETRYABLE||0)>0)alerts.push(mh.FAILED_RETRYABLE+' retryable');
+if(!s.mounts||!s.mounts.rehydrate_vfs)alerts.push('rehydrate VFS down');
+document.getElementById('alert').innerHTML=alerts.length?'<div class="alert">\u26a0 '+esc(alerts.join(' \u00b7 '))+'</div>':'';
+let mhH='<table>';
+Object.entries(mh).forEach(([k,v])=>{mhH+='<tr><td>'+esc(k)+'</td><td>'+v+'</td></tr>'});
+mhH+='</table>';
+document.getElementById('mh').innerHTML=mhH;
+let mH='<table>';
+Object.entries(s.mounts||{}).forEach(([k,v])=>{mH+='<tr><td>'+esc(k)+'</td><td class="'+(v?'ok':'bad')+'">'+(v?'OK':'DOWN')+'</td></tr>'});
+mH+='</table>';
+document.getElementById('m').innerHTML=mH;
+document.getElementById('wv').innerHTML=esc(JSON.stringify(s.worker_verify||{}));
+const fg=s.failure_groups||{};
+let fcH='<table><tr><th>category</th><th>count</th><th>last</th><th>nature</th></tr>';
+Object.entries(fg).forEach(([cat,v])=>{if(cat==='error')return;
+const c=v.transient===true?'warn':(v.transient===false?'bad':'muted');
+fcH+='<tr><td class="'+c+'">'+esc(cat)+'</td><td>'+v.count+'</td><td>'+(v.last?new Date(v.last*1000).toLocaleString():'\u2014')+'</td><td>'+(v.transient===true?'transient':v.transient===false?'persistent':'?')+'</td></tr>'});
+fcH+='</table>';
+document.getElementById('fc').innerHTML=fcH;
+const fl=s.failures||[];
+let fH='<table><tr><th>rk</th><th>title</th><th>state</th><th>category</th><th>tries</th><th></th></tr>';
+fl.forEach(r=>{fH+='<tr><td>'+r.rk+'</td><td>'+esc(r.title||'')+'</td><td>'+r.status+'</td><td class="warn">'+esc(r.category||'')+'</td><td>'+r.attempts+'</td><td><a href="./ui/trace/'+r.rk+'">trace</a></td></tr>'});
+fH+='</table>';
+document.getElementById('f').innerHTML=fl.length?fH:'<span class="ok">no failures</span>';
+}
+load();setInterval(load,15000);
+</script></body></html>

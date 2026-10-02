@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>plex_scraper trace</title>
+<style>
+:root{--bg:#14161a;--panel:#1c1f24;--fg:#d7dae0;--dim:#8b919b;--green:#4caf50;--red:#ef5350;--amber:#ffb74d;--blue:#64b5f6;--line:#2a2e35}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:13px/1.45 ui-monospace,'Cascadia Mono','Segoe UI',monospace;margin:0;padding:14px}
+h1{font-size:15px;margin:0 0 10px;color:var(--blue)}
+h3{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin:0 0 8px}
+a{color:var(--blue);text-decoration:none}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin-bottom:10px}
+.ok{color:var(--green)}.bad{color:var(--red)}.warn{color:var(--amber)}.muted{color:var(--dim)}
+button{background:#2a2e35;color:var(--fg);border:1px solid #3a3f47;border-radius:4px;padding:4px 10px;cursor:pointer}
+li{list-style:none;padding:7px 0;border-bottom:1px solid var(--line)}
+ul{padding:0;margin:0}
+.ff{color:var(--red);font-weight:700}
+pre{white-space:pre-wrap;word-break:break-all;margin:0 0 8px;padding:8px;background:var(--bg);border-radius:4px}
+@media(max-width:700px){font-size:12px}
+</style></head><body>
+<h1>plex_scraper trace</h1>
+<div id="t" class="panel"><h3>loading...</div></div>
+<div class="panel" id="a"></div>
+<script>
+const RK=window.location.pathname.split('/').pop();
+function esc(s){if(s===null||s===undefined)return'\u2014';return String(s).replace(/</g,'\u0026lt;')}
+async function load(){
+const t=await(await fetch('../api/trace/'+RK)).json();
+let steps='';
+(t.steps||[]).forEach(s=>{
+const c=s.state==='WARN'?'warn':(s.ok?'ok':'bad');
+const ff=s.state==='FAIL'&&s.step===t.first_fail?' <span class="ff">FIRST FAIL</span>':'';
+steps+='<li><span class="'+c+'">'+(s.state==='PASS'?'\u25cf':'\u2717')+'</span> <b>'+esc(s.step)+'</b> '+ff+' <span class="muted">'+s.ts+'</span><br><span class="muted">'+esc(s.detail)+'</span></li>'});
+document.getElementById('t').innerHTML=
+'<pre>'+esc(t.identity||RK)+'</pre>'+
+'<p><span class="badge '+(t.current_health==='HEALTHY'?'ok':'bad')+'">'+esc(t.current_health||'')+'</span> <span class="badge info">migration: '+esc(t.migration_history||'\u2014')+'</span></p>'+
+'<ul class="steps">'+steps+'</ul>';
+document.getElementById('a').innerHTML=
+'<button onclick="act(\'resolve\')">retry resolve</button> '+
+'<button onclick="act(\'readtest\')">retry read-test</button> '+
+'<button onclick="load()">refresh</button>'+
+' <span class="muted">no delete actions</span><div id="ares"></div>';}
+async function act(kind){
+const r=await(await fetch('../api/action/'+kind+'/'+RK,{method:'POST'})).json();
+document.getElementById('ares').innerHTML=
+'<p class="'+(r.result==='ok'||r.result==='gestart'?'ok':'bad')+'">'+esc(r.result)+' @ '+esc(r.ts||'')+'</p>';
+load();}
+load();
+</script></body></html>
