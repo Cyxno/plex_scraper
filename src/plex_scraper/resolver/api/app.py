@@ -149,7 +149,11 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
             raise KeyError(f"unknown media item {item_id}")
         result = await sweeper.check_source(item)
         out = {"check": result}
-        if result.get("repair_needed"):
+        if item.status == "NO_SOURCE":
+            out["no_source"] = await sweeper.handle_no_source(item)
+            fresh = await resolver.store.get_item(item_id)
+            out["status_now"] = fresh.status if fresh else None
+        elif result.get("repair_needed"):
             if sweeper.shadow_mode:
                 shadow = await sweeper._shadow_evaluate(item)
                 out["shadow"] = shadow

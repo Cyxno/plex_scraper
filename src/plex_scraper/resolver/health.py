@@ -241,6 +241,44 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
             self._log_json(item.plex_path, "repair_error", {"error": repr(e)[:120]})
             return False
 
+    # ---------------------------------------------------------- NO_SOURCE
+    async def handle_no_source(self, item) -> dict:
+        """Per-item NO_SOURCE-afhandeling (deelp door sweep en check-item).
+
+        Backoff-gated; shadow evalueert report-only, auto-mode repareert
+        echt en leest het resultaat terug.
+        """
+        plex_path = item.plex_path
+        if not self.no_source_retry.should_retry(plex_path):
+            return {"skipped": "backoff",
+                    "next_retry_s": round(
+                        self.no_source_retry.next_retry_in(plex_path), 0)}
+        if self.shadow_mode:
+            shadow = await self._shadow_evaluate(item)
+            if shadow.get("would_switch"):
+                self._log_json(plex_path, "no_source_would_recover", shadow)
+                self.no_source_retry.record_success(plex_path)
+                return {"shadow": shadow}
+            self.no_source_retry.record_failure(plex_path)
+            payload = {"next_retry_s": round(
+                self.no_source_retry.next_retry_in(plex_path), 0),
+                "candidates": shadow.get("candidates", 0)}
+            self._log_json(plex_path, "no_source_backoff", payload)
+            return {"backoff": payload}
+        # auto-mode: echte repair — resolve doet zijn eigen zoekactie;
+        # uitlezen wat het resultaat is
+        await self._repair(item)
+        fresh = await self.resolver.store.get_item(item.id)
+        if fresh is not None and fresh.status == "READY":
+            self.no_source_retry.record_success(plex_path)
+            self._log_event(plex_path, "no_source_recovered", "")
+            return {"recovered": True}
+        self.no_source_retry.record_failure(plex_path)
+        payload = {"next_retry_s": round(
+            self.no_source_retry.next_retry_in(plex_path), 0)}
+        self._log_json(plex_path, "no_source_backoff", payload)
+        return {"backoff": payload}
+
     # ---------------------------------------------------------- sweep cycle
     async def sweep(self):
         """Eén sweep-cyclus: check een batch items.
@@ -263,35 +301,7 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                 if item.status == "NO_SOURCE":
                     # backoff in beide modi: elke poging is een volledige
                     # scraper-zoekopdracht, dus die begrenzen we
-                    if not self.no_source_retry.should_retry(plex_path):
-                        self._update_cursor(plex_path)
-                        await asyncio.sleep(self._interval)
-                        continue
-                    if self.shadow_mode:
-                        shadow = await self._shadow_evaluate(item)
-                        if shadow.get("would_switch"):
-                            self._log_json(plex_path, "no_source_would_recover", shadow)
-                            self.no_source_retry.record_success(plex_path)
-                            shadow_switches += 1
-                        else:
-                            self.no_source_retry.record_failure(plex_path)
-                            self._log_json(plex_path, "no_source_backoff", {
-                                "next_retry_s": round(
-                                    self.no_source_retry.next_retry_in(plex_path), 0),
-                                "candidates": shadow.get("candidates", 0)})
-                    else:
-                        # auto-mode: echte repair — resolve doet zijn eigen
-                        # zoekactie; uitlezen wat het resultaat is
-                        await self._repair(item)
-                        fresh = await self.resolver.store.get_item(item.id)
-                        if fresh is not None and fresh.status == "READY":
-                            self.no_source_retry.record_success(plex_path)
-                            self._log_event(plex_path, "no_source_recovered", "")
-                        else:
-                            self.no_source_retry.record_failure(plex_path)
-                            self._log_json(plex_path, "no_source_backoff", {
-                                "next_retry_s": round(
-                                    self.no_source_retry.next_retry_in(plex_path), 0)})
+                    await self.handle_no_source(item)
                     self._update_cursor(plex_path)
                     await asyncio.sleep(self._interval)
                     continue
