@@ -19,6 +19,7 @@ from plex_scraper.common.log import event
 from plex_scraper.scraper.providers.base import DebridProvider, NotReadyError, ProviderError
 from plex_scraper.common.scoring.release_parser import parse_release
 from plex_scraper.scraper.scrapers.base import Scraper, TorrentCandidate
+from plex_scraper.resolver.selfheal import identity_gate
 from .caches import CacheSet
 from .store import Store
 from .stream import RangeReader
@@ -148,6 +149,17 @@ class Resolver:
         fallback_count = 0
         provider_adds = 0
         for cand, _score in ranked:
+            # hard identity gate: een candidate die niet titel/series/SxxEyy
+            # matcht wordt nooit gevalideerd of geactiveerd — ook niet als
+            # hij de hoogste score heeft
+            ok, why = identity_gate(item.title, item.series,
+                                    item.season, item.episode,
+                                    cand.torrent_name, item.year)
+            if not ok:
+                await self._evt("candidate_identity_rejected", item=item,
+                                hash=cand.info_hash, name=cand.torrent_name,
+                                reason=why)
+                continue
             if cand.info_hash in bad_hashes:
                 continue
             if cand.info_hash not in self._cached_hashes():

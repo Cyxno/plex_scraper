@@ -79,6 +79,9 @@ class Settings:
     sweeper_upgrade_min_score_delta: float = 5.0
     sweeper_min_source_age_s: float = 3600.0
     sweeper_cooldown_repair_s: float = 3600.0
+    sweeper_max_repairs_per_item_per_day: int = 3
+    sweeper_no_source_base_s: float = 3600.0
+    sweeper_no_source_max_s: float = 86400.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -124,6 +127,12 @@ class Settings:
                 os.environ.get("SWEEPER_MIN_SOURCE_AGE_S", cls.sweeper_min_source_age_s)),
             sweeper_cooldown_repair_s=float(
                 os.environ.get("SWEEPER_COOLDOWN_REPAIR_S", cls.sweeper_cooldown_repair_s)),
+            sweeper_max_repairs_per_item_per_day=_int(
+                "SWEEPER_MAX_REPAIRS_PER_DAY", cls.sweeper_max_repairs_per_item_per_day),
+            sweeper_no_source_base_s=float(
+                os.environ.get("SWEEPER_NO_SOURCE_BASE_S", cls.sweeper_no_source_base_s)),
+            sweeper_no_source_max_s=float(
+                os.environ.get("SWEEPER_NO_SOURCE_MAX_S", cls.sweeper_no_source_max_s)),
             torrent_ready_max_polls=_int("TORBOX_MAX_POLLS", cls.torrent_ready_max_polls),
             max_provider_adds_per_resolve=_int(
                 "MAX_PROVIDER_ADDS_PER_RESOLVE", cls.max_provider_adds_per_resolve),

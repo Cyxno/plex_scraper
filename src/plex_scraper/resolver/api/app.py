@@ -53,6 +53,12 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
             upgrade_enabled=getattr(settings, "sweeper_upgrade_enabled", False),
             upgrade_min_score_delta=getattr(settings, "sweeper_upgrade_min_score_delta", 5.0),
             shadow_mode=getattr(settings, "sweeper_shadow_mode", True),
+            max_repairs_per_item_per_day=getattr(
+                settings, "sweeper_max_repairs_per_item_per_day", 3),
+            cooldown_after_repair_s=getattr(settings, "sweeper_cooldown_repair_s", 3600.0),
+            min_source_age_s=getattr(settings, "sweeper_min_source_age_s", 3600.0),
+            no_source_base_s=getattr(settings, "sweeper_no_source_base_s", 3600.0),
+            no_source_max_s=getattr(settings, "sweeper_no_source_max_s", 86400.0),
         )
 
         @app.on_event("startup")
@@ -113,6 +119,7 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         return {"enabled": True, "shadow_mode": sweeper.shadow_mode,
                 "upgrade_enabled": sweeper.upgrade_enabled,
                 "items_per_hour": sweeper.items_per_hour,
+                "no_source_tracked": len(sweeper.no_source_retry._fail_count),
                 "events": evs}
 
     @app.post("/api/selfheal/check-now")
