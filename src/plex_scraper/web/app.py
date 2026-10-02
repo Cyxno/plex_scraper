@@ -153,6 +153,14 @@ def create_web_app(settings: Settings) -> FastAPI:
                 "FROM queue WHERE status IN ('FAILED_RETRYABLE','FAILED_FINAL') "
                 "ORDER BY updated_at DESC").fetchall():
                 d = dict(r)
+                # cross-reference met resolver: READY = RECOVERED
+                ritem = next((i for i in (items or [])
+                              if i["plex_path"] == d.get("plex_path_rel")), None)
+                current = ritem["status"] if ritem else "UNKNOWN"
+                d["current_health"] = ("HEALTHY" if current == "READY"
+                                       else "NO_SOURCE" if current == "NO_SOURCE"
+                                       else "UNKNOWN")
+                d["recovered"] = d["current_health"] == "HEALTHY"
                 cl = classify(d["last_error"], d["fail_class"])
                 d["category"] = cl["cat"]
                 d["display_title"] = display_title(
@@ -161,7 +169,10 @@ def create_web_app(settings: Settings) -> FastAPI:
                     d.get("season"), d.get("episode"), d.get("year"))
                 d["human"] = cl["human"]
                 d["transient"] = cl["transient"]
-                fl.append(d)
+                if d["recovered"]:
+                    recovered.append(d)
+                else:
+                    fl.append(d)
                 entry = fg.setdefault(cl["cat"], {
                     "count": 0, "last": None, "first": None,
                     "transient": cl["transient"]})
@@ -171,19 +182,11 @@ def create_web_app(settings: Settings) -> FastAPI:
                     entry["last"] = ts
                 if not entry["first"] or ts < entry["first"]:
                     entry["first"] = ts
-        # split: actuele failures vs recovered (resolver READY = hersteld)
+        # split: actuele failures vs recovered — resolver-API is leidend
         current_failures = []
         recovered = []
-        resolver_map = {}
-        try:
-            for i in (items or []):
-                resolver_map[i["plex_path"]] = i
-        except Exception:
-            pass
         for d in fl:
-            m = resolver_map.get(d.get("plex_path_rel"))
-            if m and m["status"] == "READY":
-                d["recovered"] = True
+            if d["recovered"]:
                 recovered.append(d)
             else:
                 current_failures.append(d)
