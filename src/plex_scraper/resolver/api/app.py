@@ -132,6 +132,25 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         await sweeper.sweep()
         return {"result": "sweep complete"}
 
+    @app.post("/api/selfheal/check-item/{item_id}")
+    async def selfheal_check_item(item_id: str):
+        """Gerichte health-check + (auto-mode) repair van één item."""
+        sweeper = app.state.sweeper if hasattr(app.state, "sweeper") else None
+        if sweeper is None:
+            return {"error": "sweeper not enabled"}
+        item = await resolver.store.get_item(item_id)
+        if item is None:
+            raise KeyError(f"unknown media item {item_id}")
+        result = await sweeper.check_source(item)
+        out = {"check": result}
+        if result.get("repair_needed"):
+            if sweeper.shadow_mode:
+                shadow = await sweeper._shadow_evaluate(item)
+                out["shadow"] = shadow
+            else:
+                out["repair_done"] = await sweeper._repair(item)
+        return out
+
     @app.get("/status")
     async def status():
         items = await resolver.store.list_items()
