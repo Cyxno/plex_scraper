@@ -110,11 +110,16 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
             return {"enabled": False}
         c = sqlite3.connect(sweeper.db_path)
         evs = []
+        counts: dict[str, int] = {}
         if c:
             try:
                 c.row_factory = sqlite3.Row
                 evs = [dict(r) for r in c.execute(
                     "SELECT * FROM health_events ORDER BY id DESC LIMIT 20").fetchall()]
+                counts = {r["event"]: r["n"] for r in c.execute(
+                    "SELECT event, COUNT(*) n FROM health_events WHERE ts >= ? "
+                    "GROUP BY event ORDER BY n DESC",
+                    (time.time() - 86400,)).fetchall()}
             except Exception:
                 pass
             c.close()
@@ -122,6 +127,7 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
                 "upgrade_enabled": sweeper.upgrade_enabled,
                 "items_per_hour": sweeper.items_per_hour,
                 "no_source_tracked": len(sweeper.no_source_retry._fail_count),
+                "counts_24h": counts,
                 "events": evs}
 
     @app.post("/api/selfheal/check-now")

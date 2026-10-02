@@ -34,6 +34,7 @@ ul{padding:0;margin:0}
 <p><a href="/">summary</a> · trace: <input id="rk" placeholder="ratingKey" size="12"><button onclick="location='./ui/trace/'+document.getElementById('rk').value">trace</button></p>
 <div id="alert"></div>
 <div id="rh" class="panel"><h3>current library health</h3>loading...</div>
+<div id="sh" class="panel"><h3>self-healing</h3>loading...</div>
 <div id="mh" class="panel"><h3>migration history</h3>loading...</div>
 <div class="panel"><h3>mounts</h3><div id="m"></div></div>
 <div class="panel"><h3>worker verify</h3><div id="wv"></div></div>
@@ -52,6 +53,23 @@ rhH+='<tr><th>TOTAL</th><td>'+(rh.TOTAL??'\u2014')+'</td></tr></table>';
 if(rh.last_ok_resolve)rhH+='<p class="muted">last OK: '+new Date(rh.last_ok_resolve.ts*1000).toLocaleTimeString()+'</p>';
 if(rh.last_error)rhH+='<p class="warn">last error: '+esc(rh.last_error.kind||'')+'</p>';
 document.getElementById('rh').innerHTML=rhH;
+const sh=s.selfheal;
+let shH='';
+if(!sh||!sh.enabled){shH='<span class="muted">sweeper uit</span>';}
+else{
+const modeB=sh.mode==='auto-repair'?'<span class="badge ok">auto-repair</span>':'<span class="badge warn">shadow</span>';
+shH+='<p>'+modeB+' <span class="badge info">upgrade: '+esc(sh.upgrade)+'</span> <span class="muted">'+sh.items_per_hour+' items/u · no_source in backoff: '+sh.no_source_tracked+'</span></p>';
+const cnt=sh.counts_24h||{};
+let cH='<table><tr><th>event (24h)</th><th>#</th></tr>';
+Object.entries(cnt).forEach(([k,v])=>{const cls=(k.indexOf('repair')===0||k.indexOf('no_source_recovered')===0)?'ok':(k.indexOf('_backoff')>0||k.indexOf('strike')>0)?'warn':(k.indexOf('no_alternative')>0||k.indexOf('error')>0)?'bad':'info';cH+='<tr><td class="'+cls+'">'+esc(k)+'</td><td>'+v+'</td></tr>'});
+cH+='</table>';
+shH+=cH;
+const evs=sh.events||[];
+if(evs.length){shH+='<table><tr><th>laatste events</th><th></th></tr>';
+evs.forEach(e=>{shH+='<tr><td class="muted">'+new Date(e.ts*1000).toLocaleTimeString()+'</td><td>'+esc(e.event)+' <span class="muted">'+esc(e.plex_path)+'</span></td></tr>'});
+shH+='</table>';}
+}
+document.getElementById('sh').innerHTML=shH;
 const alerts=[];
 if((rh.NO_SOURCE||0)>0)alerts.push(rh.NO_SOURCE+' NO_SOURCE');
 if((mh.FAILED_RETRYABLE||0)>0)alerts.push(mh.FAILED_RETRYABLE+' retryable');

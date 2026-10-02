@@ -191,6 +191,24 @@ def create_web_app(settings: Settings) -> FastAPI:
                 recovered.append(d)
             else:
                 current_failures.append(d)
+        selfheal = None
+        try:
+            sh = resolver("/api/selfheal/status", 15)
+            selfheal = {
+                "enabled": sh.get("enabled", False),
+                "mode": ("auto-repair" if not sh.get("shadow_mode") else "shadow"),
+                "upgrade": ("aan" if sh.get("upgrade_enabled") else "uit"),
+                "items_per_hour": sh.get("items_per_hour"),
+                "no_source_tracked": sh.get("no_source_tracked", 0),
+                "counts_24h": sh.get("counts_24h", {}),
+                "events": [
+                    {"ts": e.get("ts"), "event": e.get("event"),
+                     "plex_path": (e.get("plex_path") or "")[-48:],
+                     "detail": (e.get("detail") or "")[:100]}
+                    for e in (sh.get("events") or [])[:8]],
+            }
+        except Exception:
+            selfheal = None
         return {
             "resolver_health": rh,
             "resolver_error": resolver_err,
@@ -198,6 +216,7 @@ def create_web_app(settings: Settings) -> FastAPI:
             "failure_groups": fg,
             "failures": current_failures[:25],
             "recovered": recovered[:25],
+            "selfheal": selfheal,
             "mounts": _mounts(),
             "last_ok_resolve": (last_ok or None) and {
                 "ts": last_ok.get("ts"), "item_id": last_ok.get("item_id"),
