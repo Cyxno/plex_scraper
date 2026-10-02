@@ -51,6 +51,20 @@ class ShadowResult:
 
 
 # ---------------------------------------------------------- identity gate
+def _norm_words(s: str | None) -> list[str]:
+    """Zelfde normalisatie als de candidate-naam: lower, . _ : → spatie."""
+    n = (s or "").lower().replace(".", " ").replace("_", " ").replace(":", " ")
+    return [w for w in n.split() if len(w) > 2]
+
+
+def _norm_compact(s: str | None) -> str:
+    """Punt-loze, spatie-loze vorm voor korte/gestippelde namen (S.W.A.T.)."""
+    n = (s or "").lower()
+    for ch in (".", "_", ":", " ", "-", "'"):
+        n = n.replace(ch, "")
+    return n
+
+
 def identity_gate(item_title: str, item_gp: str | None,
                   item_season: int | None, item_episode: int | None,
                   candidate_name: str, item_year: int | None = None,
@@ -58,27 +72,34 @@ def identity_gate(item_title: str, item_gp: str | None,
     """Harde identity-match tussen media-item en candidate release-naam.
     Retourneert (pass, reden). Geen score — puur identity."""
     cname = candidate_name.lower().replace(".", " ").replace("_", " ")
-    item_lower = (item_title or "").lower()
+    cname_compact = cname.replace(" ", "")
 
     # films: title moet in candidate zitten
     if not item_gp:
-        words = [w for w in item_lower.split() if len(w) > 2]
+        words = _norm_words(item_title)
         if not words:
             return True, "onvoldoende metadata voor identity check"
         missing = [w for w in words if w not in cname]
         if len(missing) > len(words) // 2:
+            compact = _norm_compact(item_title)
+            if len(compact) >= 5 and compact in cname_compact:
+                return True, "film identity OK (compact)"
             return False, f"title mismatch: {missing} niet in candidate"
         if item_year and candidate_year:
             if abs(int(item_year) - int(candidate_year)) > 1:
                 return False, f"year mismatch: {item_year} vs {candidate_year}"
         return True, "film identity OK"
 
-    # episodes: series name + SxxEyy
-    series_words = [w for w in (item_gp or "").lower().split() if len(w) > 2]
-    if not series_words:
-        return True, "geen series-naam voor identity check"
-    missing_series = [w for w in series_words if w not in cname]
-    if len(missing_series) > len(series_words) // 2:
+    # episodes: series name + SxxEyy — de SxxEyy-eis geldt ALTIED,
+    # ook als de series-naam alleen compact (S.W.A.T.) herkend kan worden
+    series_words = _norm_words(item_gp)
+    compact = _norm_compact(item_gp)
+    if series_words:
+        missing_series = [w for w in series_words if w not in cname]
+        if len(missing_series) > len(series_words) // 2:
+            if not (len(compact) >= 4 and compact in cname_compact):
+                return False, f"series mismatch: {item_gp} niet in candidate"
+    elif len(compact) >= 4 and compact not in cname_compact:
         return False, f"series mismatch: {item_gp} niet in candidate"
     if item_season is not None and item_episode is not None:
         se = f"s{int(item_season):02d}e{int(item_episode):02d}"

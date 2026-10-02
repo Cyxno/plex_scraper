@@ -140,16 +140,27 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
             return result
         try:
             import urllib.request
+
+            def _read(url: str, timeout: float, attempts: int = 2) -> bytes:
+                # één retry binnen dezelfde check: koude TorBox-starts zijn
+                # traag maar werken; alleen structurele fouten (502 etc.)
+                # moeten een strike opleveren
+                last: Exception = RuntimeError("no attempt")
+                for i in range(attempts):
+                    try:
+                        return urllib.request.urlopen(url, timeout=timeout).read()
+                    except Exception as exc:            # noqa: BLE001
+                        last = exc
+                        if i + 1 < attempts:
+                            time.sleep(2.0)
+                raise last
+
             h = json.loads(urllib.request.urlopen(urllib.request.Request(
                 f"{RESOLVER_BASE}/media/{item.id}/open",
-                method="POST"), timeout=60).read())
+                method="POST"), timeout=90).read())
             handle = h["handle"]
-            d1 = urllib.request.urlopen(
-                f"{RESOLVER_BASE}/stream/{handle}?offset=0&length=64",
-                timeout=60).read()
-            d2 = urllib.request.urlopen(
-                f"{RESOLVER_BASE}/stream/{handle}?offset=65536&length=64",
-                timeout=60).read()
+            d1 = _read(f"{RESOLVER_BASE}/stream/{handle}?offset=0&length=64", 120.0)
+            d2 = _read(f"{RESOLVER_BASE}/stream/{handle}?offset=65536&length=64", 120.0)
             urllib.request.urlopen(urllib.request.Request(
                 f"{RESOLVER_BASE}/open/{handle}", method="DELETE"), timeout=30)
             result["healthy"] = (len(d1) == 64 and len(d2) == 64
