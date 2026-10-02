@@ -23,3 +23,17 @@ Compose-bestand heeft ook scraper/web-services voor nieuwe installs.
 - Acties: retry resolve, retry read-test (geen deletes)
 
 URL: http://<host>:8285/
+
+## Host-storage: stateful mounts direct via /mnt/cache (shfs/FUSE-bypass)
+
+Op Unraid loopt `/mnt/user/appdata/...` via shfs/FUSE. Na een shfs-wedge zijn
+alle I/O-/stategevoelige plex_scraper-mounts (state db, config, secrets,
+migration-state) daarom bewust direct via `/mnt/cache/appdata/plex-scraper/...`
+gemount (appdata-share staat fysiek uitsluitend op de cachepool, dus het is
+dezelfde data — alleen het I/O-pad verschilt: XFS direct i.p.v. fuse.shfs).
+
+Dit geldt voor: resolver (/data, /config, secret), scraper (/config, secret),
+web (/db.sqlite snapshot van migration-state) én de migration-worker state/logs.
+RO media-binds (/mnt/debrid, /mnt/remote/nzbdav, /mnt/vm_storage) zijn ongewijzigd.
+Bij recreatie altijd de cache-pad-variant gebruiken; DockerMan-templates en
+docker-compose.yml zijn hierop gezet.
