@@ -123,6 +123,7 @@ def create_web_app(settings: Settings) -> FastAPI:
     async def summary():
         resolver_err = None
         rh: dict = {}
+        items = None
         last_ok = last_err = None
         try:
             st = resolver("/status", 30)
