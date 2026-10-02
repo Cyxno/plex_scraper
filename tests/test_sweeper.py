@@ -153,6 +153,36 @@ async def test_no_source_backoff_grows_without_candidates(tmp_path):
     assert sw.no_source_retry.should_retry(item.plex_path) is False
 
 
+async def test_auto_mode_repairs_no_source(tmp_path):
+    """Auto-mode: NO_SOURCE + would_switch → echte repair, dan recovered."""
+    async def fake_repair(it):
+        it.status = "READY"                          # resolve slaagt
+        return True
+    item = _mk_item(status="NO_SOURCE")
+    resolver = _fake_resolver([item], {item.id: [(cand("h1", GOOD[0]), GOOD[1])]})
+    resolver.store.get_item = _async(item)           # status-uitlzing
+    sw = _mk_sweeper(tmp_path, resolver, shadow=False)
+    sw._repair = fake_repair
+    await sw.sweep()
+    kinds = [e["event"] for e in _events(sw.db_path)]
+    assert "no_source_recovered" in kinds
+    assert sw.no_source_retry.should_retry(item.plex_path) is True  # success reset
+
+
+async def test_auto_mode_no_source_stays_in_backoff_on_failure(tmp_path):
+    async def fake_repair(it):
+        return True                                  # resolve faalt
+    item = _mk_item(status="NO_SOURCE")
+    resolver = _fake_resolver([item], {item.id: []})
+    resolver.store.get_item = _async(item)           # blijft NO_SOURCE
+    sw = _mk_sweeper(tmp_path, resolver, shadow=False)
+    sw._repair = fake_repair
+    await sw.sweep()
+    kinds = [e["event"] for e in _events(sw.db_path)]
+    assert "no_source_backoff" in kinds
+    assert sw.no_source_retry.should_retry(item.plex_path) is False
+
+
 async def test_auto_repair_blocked_by_antiflapping(tmp_path):
     """Auto-mode met vol repair-verleden: flapping-gate blokkeert resolve."""
     item = _mk_item()

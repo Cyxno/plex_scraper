@@ -267,17 +267,31 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                         self._update_cursor(plex_path)
                         await asyncio.sleep(self._interval)
                         continue
-                    shadow = await self._shadow_evaluate(item)
-                    if shadow.get("would_switch"):
-                        self._log_json(plex_path, "no_source_would_recover", shadow)
-                        self.no_source_retry.record_success(plex_path)
-                        shadow_switches += 1
+                    if self.shadow_mode:
+                        shadow = await self._shadow_evaluate(item)
+                        if shadow.get("would_switch"):
+                            self._log_json(plex_path, "no_source_would_recover", shadow)
+                            self.no_source_retry.record_success(plex_path)
+                            shadow_switches += 1
+                        else:
+                            self.no_source_retry.record_failure(plex_path)
+                            self._log_json(plex_path, "no_source_backoff", {
+                                "next_retry_s": round(
+                                    self.no_source_retry.next_retry_in(plex_path), 0),
+                                "candidates": shadow.get("candidates", 0)})
                     else:
-                        self.no_source_retry.record_failure(plex_path)
-                        self._log_json(plex_path, "no_source_backoff", {
-                            "next_retry_s": round(
-                                self.no_source_retry.next_retry_in(plex_path), 0),
-                            "candidates": shadow.get("candidates", 0)})
+                        # auto-mode: echte repair — resolve doet zijn eigen
+                        # zoekactie; uitlezen wat het resultaat is
+                        await self._repair(item)
+                        fresh = await self.resolver.store.get_item(item.id)
+                        if fresh is not None and fresh.status == "READY":
+                            self.no_source_retry.record_success(plex_path)
+                            self._log_event(plex_path, "no_source_recovered", "")
+                        else:
+                            self.no_source_retry.record_failure(plex_path)
+                            self._log_json(plex_path, "no_source_backoff", {
+                                "next_retry_s": round(
+                                    self.no_source_retry.next_retry_in(plex_path), 0)})
                     self._update_cursor(plex_path)
                     await asyncio.sleep(self._interval)
                     continue
