@@ -87,6 +87,16 @@ def create_web_app(settings: Settings) -> FastAPI:
             return {"cat": "UNKNOWN", "transient": None, "human": "Unknown — check trace."}
         return {"cat": "OTHER", "transient": None, "human": (last_error or c)[:120]}
 
+    def display_title(kind, title, gp=None, season=None, episode=None, year=None):
+        """Centrale display-title formatter — één logica overal."""
+        if kind == "episode" and gp:
+            se = "S%02dE%02d" % (int(season or 0), int(episode or 0))
+            if title and title.strip():
+                return "%s \u2014 %s \u2014 %s" % (gp, se, title)
+            return "%s \u2014 %s" % (gp, se)
+        yr = " (%s)" % year if year else ""
+        return "%s%s" % (title or "", yr)
+
     # ------------------------------------------------------------- pages
     @app.get("/", response_class=HTMLResponse)
     async def index():
@@ -144,6 +154,10 @@ def create_web_app(settings: Settings) -> FastAPI:
                 d = dict(r)
                 cl = classify(d["last_error"], d["fail_class"])
                 d["category"] = cl["cat"]
+                d["display_title"] = display_title(
+                    "episode" if d.get("gp") else "movie",
+                    d.get("title") or "", d.get("gp"),
+                    d.get("season"), d.get("episode"), d.get("year"))
                 d["human"] = cl["human"]
                 d["transient"] = cl["transient"]
                 fl.append(d)
@@ -196,6 +210,11 @@ def create_web_app(settings: Settings) -> FastAPI:
                 "id": m["id"], "rk": (q or {}).get("rk"),
                 "plex_path": m["plex_path"], "status": m["status"],
                 "title": (q or {}).get("title") or m["plex_path"].split("/")[-1],
+                "display_title": display_title(
+                    "episode" if m["kind"] == "episode" else "movie",
+                    (q or {}).get("title") or "",
+                    (q or {}).get("gp"), (q or {}).get("s"),
+                    (q or {}).get("e"), (q or {}).get("year")),
                 "series": (q or {}).get("gp"),
                 "season": (q or {}).get("s"), "episode": (q or {}).get("e"),
                 "year": (q or {}).get("year"),
@@ -239,6 +258,11 @@ def create_web_app(settings: Settings) -> FastAPI:
                  "rk niet in migration-queue (legacy debrid-pad of onbekend)")
             return {"rk": rk, "steps": steps, "first_fail": first_fail}
 
+        mark("media identity", True,
+             display_title(
+                 "episode" if row.get("gp") else "movie",
+                 row.get("title") or "", row.get("gp"),
+                 row.get("season"), row.get("episode"), row.get("year")))
         mark("resolver record", item is not None,
              f"id={row['resolver_item_id']} status={row['status']} "
              f"gen={row.get('generation', 0)}"
