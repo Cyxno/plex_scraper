@@ -140,30 +140,37 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
             result["repair_needed"] = item.status in ("NO_SOURCE", "SOURCE_FAILED")
             return result
         try:
-            import urllib.request
+            import httpx
+            # httpx ASYNC: urllib-blocking calls hier zouden de resolver-
+            # eventloop bevriezen (sweeper draait in hetzelfde proces) —
+            # dat manifesteerde zich als 90s-stalls van élke API-call.
+            t = httpx.Timeout(90.0, read=120.0)
+            async with httpx.AsyncClient(timeout=t) as client:
+                h = (await client.post(
+                    f"{RESOLVER_BASE}/media/{item.id}/open")).json()
+                handle = h["handle"]
 
-            def _read(url: str, timeout: float, attempts: int = 2) -> bytes:
-                # één retry binnen dezelfde check: koude TorBox-starts zijn
-                # traag maar werken; alleen structurele fouten (502 etc.)
-                # moeten een strike opleveren
-                last: Exception = RuntimeError("no attempt")
-                for i in range(attempts):
-                    try:
-                        return urllib.request.urlopen(url, timeout=timeout).read()
-                    except Exception as exc:            # noqa: BLE001
-                        last = exc
-                        if i + 1 < attempts:
-                            time.sleep(2.0)
-                raise last
+                async def _read(url: str) -> bytes:
+                    # één retry binnen dezelfde check: koude TorBox-starts
+                    # zijn traag maar werken; alleen structurele fouten
+                    # (502 etc.) moeten een strike opleveren
+                    last: Exception = RuntimeError("no attempt")
+                    for i in range(2):
+                        try:
+                            r = await client.get(url)
+                            r.raise_for_status()
+                            return r.content
+                        except Exception as exc:      # noqa: BLE001
+                            last = exc
+                            if i + 1 < 2:
+                                await asyncio.sleep(2.0)
+                    raise last
 
-            h = json.loads(urllib.request.urlopen(urllib.request.Request(
-                f"{RESOLVER_BASE}/media/{item.id}/open",
-                method="POST"), timeout=90).read())
-            handle = h["handle"]
-            d1 = _read(f"{RESOLVER_BASE}/stream/{handle}?offset=0&length=64", 120.0)
-            d2 = _read(f"{RESOLVER_BASE}/stream/{handle}?offset=65536&length=64", 120.0)
-            urllib.request.urlopen(urllib.request.Request(
-                f"{RESOLVER_BASE}/open/{handle}", method="DELETE"), timeout=30)
+                d1 = await _read(
+                    f"{RESOLVER_BASE}/stream/{handle}?offset=0&length=64")
+                d2 = await _read(
+                    f"{RESOLVER_BASE}/stream/{handle}?offset=65536&length=64")
+                await client.delete(f"{RESOLVER_BASE}/open/{handle}")
             result["healthy"] = (len(d1) == 64 and len(d2) == 64
                                  and d1[:4] == bytes.fromhex("1a45dfa3"))
         except Exception as e:
@@ -224,10 +231,9 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
             self._log_json(item.plex_path, "repair_skipped_flapping", {"reason": why})
             return False
         try:
-            import urllib.request
-            urllib.request.urlopen(urllib.request.Request(
-                f"{RESOLVER_BASE}/media/{item.id}/resolve",
-                method="POST"), timeout=300)
+            import httpx
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=300.0)) as client:
+                await client.post(f"{RESOLVER_BASE}/media/{item.id}/resolve")
             self.antiflap.record_repair(item.plex_path)
             self._log_event(item.plex_path, "repair_triggered", "")
             return True
