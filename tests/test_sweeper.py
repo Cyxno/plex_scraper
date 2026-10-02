@@ -82,9 +82,11 @@ async def test_engine_identity_gate_blocks_wrong_content(settings, scorer, got_i
 
 
 # ------------------------------------------------------------------ sweeper
-def _mk_sweeper(tmp_path, resolver, *, shadow=True, items_per_hour=360000):
+def _mk_sweeper(tmp_path, resolver, *, shadow=True, items_per_hour=360000,
+                fail_strikes=2):
     return HealthSweeper(resolver, str(tmp_path / "hs.sqlite"),
-                         items_per_hour=items_per_hour, shadow_mode=shadow)
+                         items_per_hour=items_per_hour, shadow_mode=shadow,
+                         fail_strikes=fail_strikes)
 
 
 async def test_shadow_would_switch_on_broken_ready(tmp_path):
@@ -93,7 +95,7 @@ async def test_shadow_would_switch_on_broken_ready(tmp_path):
     resolver = _fake_resolver(
         [item], {item.id: [(cand("h1", GOOD[0]), GOOD[1])]},
         active_by_id={item.id: SimpleNamespace(score=70.0, info_hash="old")})
-    sw = _mk_sweeper(tmp_path, resolver)
+    sw = _mk_sweeper(tmp_path, resolver, fail_strikes=1)
     await sw.sweep()
     evs = _events(sw.db_path)
     kinds = [e["event"] for e in evs]
@@ -112,7 +114,7 @@ async def test_shadow_no_alternative_when_identity_fails(tmp_path):
     resolver = _fake_resolver(
         [item], {item.id: [(cand("w1", WRONG[0]), WRONG[1])]},
         active_by_id={item.id: SimpleNamespace(score=70.0, info_hash="old")})
-    sw = _mk_sweeper(tmp_path, resolver)
+    sw = _mk_sweeper(tmp_path, resolver, fail_strikes=1)
     await sw.sweep()
     evs = _events(sw.db_path)
     assert "shadow_no_alternative" in [e["event"] for e in evs]
@@ -157,10 +159,28 @@ async def test_auto_repair_blocked_by_antiflapping(tmp_path):
     resolver = _fake_resolver(
         [item], {item.id: [(cand("h1", GOOD[0]), GOOD[1])]},
         active_by_id={item.id: SimpleNamespace(score=70.0, info_hash="old")})
-    sw = _mk_sweeper(tmp_path, resolver, shadow=False)
+    sw = _mk_sweeper(tmp_path, resolver, shadow=False, fail_strikes=1)
     now = time.time()
     sw.antiflap._history[item.plex_path] = [now] * 3  # 3 repairs vandaag
     await sw.sweep()
     kinds = [e["event"] for e in _events(sw.db_path)]
     assert "repair_skipped_flapping" in kinds
     assert "repair_triggered" not in kinds
+
+
+async def test_fail_strikes_debounce(tmp_path):
+    """Eerste failure = strike, pas de tweede = repair_needed evaluatie."""
+    item = _mk_item()
+    resolver = _fake_resolver(
+        [item], {item.id: [(cand("h1", GOOD[0]), GOOD[1])]},
+        active_by_id={item.id: SimpleNamespace(score=70.0, info_hash="old")})
+    sw = _mk_sweeper(tmp_path, resolver)  # default fail_strikes=2
+    await sw.sweep()
+    kinds = [e["event"] for e in _events(sw.db_path)]
+    assert "sweep_strike" in kinds
+    assert "sweep_repair_needed" not in kinds
+    assert "shadow_would_switch" not in kinds
+    await sw.sweep()
+    kinds2 = [e["event"] for e in _events(sw.db_path)]
+    assert "sweep_repair_needed" in kinds2
+    assert "shadow_would_switch" in kinds2

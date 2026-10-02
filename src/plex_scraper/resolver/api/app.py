@@ -59,6 +59,7 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
             min_source_age_s=getattr(settings, "sweeper_min_source_age_s", 3600.0),
             no_source_base_s=getattr(settings, "sweeper_no_source_base_s", 3600.0),
             no_source_max_s=getattr(settings, "sweeper_no_source_max_s", 86400.0),
+            fail_strikes=getattr(settings, "sweeper_fail_strikes", 2),
         )
 
         @app.on_event("startup")

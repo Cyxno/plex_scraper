@@ -41,7 +41,8 @@ class HealthSweeper:
                  cooldown_after_repair_s: float = 3600.0,
                  min_source_age_s: float = 3600.0,
                  no_source_base_s: float = 3600.0,
-                 no_source_max_s: float = 86400.0):
+                 no_source_max_s: float = 86400.0,
+                 fail_strikes: int = 2):
         self.resolver = resolver
         self.db_path = db_path
         self.items_per_hour = items_per_hour
@@ -54,6 +55,8 @@ class HealthSweeper:
             max_repairs_per_day=max_repairs_per_item_per_day)
         self.no_source_retry = NoSourceRetry(base_s=no_source_base_s,
                                              max_s=no_source_max_s)
+        self.fail_strikes = max(1, fail_strikes)
+        self._strikes: dict[str, int] = {}
         self._interval = 3600.0 / max(items_per_hour, 1)
         self._running = False
         self._task = None
@@ -254,19 +257,29 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                 result = await self.check_source(item)
                 checks += 1
                 if result["repair_needed"]:
-                    self._log_event(plex_path, "sweep_repair_needed",
-                                    json.dumps({"status": item.status,
-                                                "error": result.get("error")}))
-                    if self.shadow_mode:
-                        shadow = await self._shadow_evaluate(item)
-                        if shadow.get("would_switch"):
-                            self._log_json(plex_path, "shadow_would_switch", shadow)
-                            shadow_switches += 1
-                        else:
-                            self._log_json(plex_path, "shadow_no_alternative", shadow)
+                    strikes = self._strikes.get(plex_path, 0) + 1
+                    self._strikes[plex_path] = strikes
+                    if strikes < self.fail_strikes:
+                        # debounce: één trage/failed read is nog geen bewijs
+                        self._log_event(plex_path, "sweep_strike",
+                                        json.dumps({"strike": strikes,
+                                                    "of": self.fail_strikes,
+                                                    "error": result.get("error")}))
                     else:
-                        if await self._repair(item):
-                            repairs += 1
+                        self._log_event(plex_path, "sweep_repair_needed",
+                                        json.dumps({"status": item.status,
+                                                    "strikes": strikes,
+                                                    "error": result.get("error")}))
+                        if self.shadow_mode:
+                            shadow = await self._shadow_evaluate(item)
+                            if shadow.get("would_switch"):
+                                self._log_json(plex_path, "shadow_would_switch", shadow)
+                                shadow_switches += 1
+                            else:
+                                self._log_json(plex_path, "shadow_no_alternative", shadow)
+                        else:
+                            if await self._repair(item):
+                                repairs += 1
                 elif self.upgrade_enabled:
                     shadow = await self._shadow_evaluate(item)
                     best = shadow.get("best")
@@ -277,6 +290,7 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                         self._log_json(plex_path, "upgrade_available", shadow)
                 if result.get("healthy"):
                     self.no_source_retry.record_success(plex_path)
+                    self._strikes.pop(plex_path, None)
                 self._update_cursor(plex_path)
             except Exception as e:
                 log.warning("sweep item error: %s", e)
