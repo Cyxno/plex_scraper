@@ -279,8 +279,13 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                 result = await self.check_source(item)
                 checks += 1
                 if result["repair_needed"]:
-                    strikes = self._strikes.get(plex_path, 0) + 1
-                    self._strikes[plex_path] = strikes
+                    # strikes debounceën alleen flaky READS (item was READY);
+                    # definitive states (SOURCE_FAILED/NO_SOURCE) meten direct
+                    if item.status == "READY":
+                        strikes = self._strikes.get(plex_path, 0) + 1
+                        self._strikes[plex_path] = strikes
+                    else:
+                        strikes = self.fail_strikes
                     if strikes < self.fail_strikes:
                         # debounce: één trage/failed read is nog geen bewijs
                         self._log_event(plex_path, "sweep_strike",
