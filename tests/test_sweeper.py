@@ -160,7 +160,7 @@ async def test_auto_mode_repairs_no_source(tmp_path):
         return True
     item = _mk_item(status="NO_SOURCE")
     resolver = _fake_resolver([item], {item.id: [(cand("h1", GOOD[0]), GOOD[1])]})
-    resolver.store.get_item = _async(item)           # status-uitlzing
+    resolver.store.get_item = lambda iid: _async(item)           # status-uitlzing
     sw = _mk_sweeper(tmp_path, resolver, shadow=False)
     sw._repair = fake_repair
     await sw.sweep()
@@ -174,7 +174,7 @@ async def test_auto_mode_no_source_stays_in_backoff_on_failure(tmp_path):
         return True                                  # resolve faalt
     item = _mk_item(status="NO_SOURCE")
     resolver = _fake_resolver([item], {item.id: []})
-    resolver.store.get_item = _async(item)           # blijft NO_SOURCE
+    resolver.store.get_item = lambda iid: _async(item)           # blijft NO_SOURCE
     sw = _mk_sweeper(tmp_path, resolver, shadow=False)
     sw._repair = fake_repair
     await sw.sweep()
