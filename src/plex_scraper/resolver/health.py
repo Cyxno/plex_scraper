@@ -134,7 +134,9 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
         result = {"plex_path": item.plex_path, "status": item.status,
                   "healthy": False, "repair_needed": False, "upgrade": None}
         if item.status != "READY":
-            result["repair_needed"] = item.status == "NO_SOURCE"
+            # NO_SOURCE én SOURCE_FAILED: geen werkende actieve source.
+            # RESOLVING/CANDIDATE_VALIDATION zijn in-flight en wachten we af.
+            result["repair_needed"] = item.status in ("NO_SOURCE", "SOURCE_FAILED")
             return result
         try:
             import urllib.request
