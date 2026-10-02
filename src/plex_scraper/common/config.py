@@ -71,6 +71,14 @@ class Settings:
     resolve_candidate_timeout: float = 120.0
     torrent_ready_poll_interval: float = 8.0
     torrent_ready_max_polls: int = 10
+    # health sweeper
+    sweeper_items_per_hour: int = 100
+    sweeper_enabled: bool = False
+    sweeper_shadow_mode: bool = True
+    sweeper_upgrade_enabled: bool = False
+    sweeper_upgrade_min_score_delta: float = 5.0
+    sweeper_min_source_age_s: float = 3600.0
+    sweeper_cooldown_repair_s: float = 3600.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -106,6 +114,16 @@ class Settings:
             torrent_ready_poll_interval=float(
                 os.environ.get("TORBOX_POLL_INTERVAL", cls.torrent_ready_poll_interval)
             ),
+            sweeper_items_per_hour=_int("SWEEPER_ITEMS_PER_HOUR", cls.sweeper_items_per_hour),
+            sweeper_enabled=_bool("SWEEPER_ENABLED", cls.sweeper_enabled),
+            sweeper_shadow_mode=_bool("SWEEPER_SHADOW_MODE", cls.sweeper_shadow_mode),
+            sweeper_upgrade_enabled=_bool("SWEEPER_UPGRADE_ENABLED", cls.sweeper_upgrade_enabled),
+            sweeper_upgrade_min_score_delta=float(
+                os.environ.get("SWEEPER_UPGRADE_MIN_DELTA", cls.sweeper_upgrade_min_score_delta)),
+            sweeper_min_source_age_s=float(
+                os.environ.get("SWEEPER_MIN_SOURCE_AGE_S", cls.sweeper_min_source_age_s)),
+            sweeper_cooldown_repair_s=float(
+                os.environ.get("SWEEPER_COOLDOWN_REPAIR_S", cls.sweeper_cooldown_repair_s)),
             torrent_ready_max_polls=_int("TORBOX_MAX_POLLS", cls.torrent_ready_max_polls),
             max_provider_adds_per_resolve=_int(
                 "MAX_PROVIDER_ADDS_PER_RESOLVE", cls.max_provider_adds_per_resolve),

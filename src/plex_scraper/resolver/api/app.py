@@ -6,6 +6,9 @@ Debug (DEBUG=true only): /debug/sources/{id}/fail, /debug/media/{id}/fail-curren
 """
 from __future__ import annotations
 
+import asyncio
+import os
+import sqlite3
 import time
 
 from fastapi import FastAPI, Request, Response
@@ -38,6 +41,34 @@ def process_cpu_seconds() -> float:
 def create_app(resolver: Resolver, settings) -> FastAPI:
     app = FastAPI(title="plex_scraper resolver", version=__version__, docs_url=None, redoc_url=None)
 
+    # health sweeper (optional, disabled by default)
+    sweeper_task = None
+    if getattr(settings, "sweeper_enabled", False):
+        from plex_scraper.resolver.health import HealthSweeper
+        db_dir = os.path.dirname(settings.db_path) or "/data"
+        sweeper = HealthSweeper(
+            resolver,
+            db_path=os.path.join(db_dir, "health-sweeper.sqlite"),
+            items_per_hour=getattr(settings, "sweeper_items_per_hour", 100),
+            upgrade_enabled=getattr(settings, "sweeper_upgrade_enabled", False),
+            upgrade_min_score_delta=getattr(settings, "sweeper_upgrade_min_score_delta", 5.0),
+            shadow_mode=getattr(settings, "sweeper_shadow_mode", True),
+        )
+
+        @app.on_event("startup")
+        async def _start_sweeper():
+            nonlocal sweeper_task
+            sweeper_task = asyncio.get_event_loop().create_task(sweeper.run())
+
+        @app.on_event("shutdown")
+        async def _stop_sweeper():
+            sweeper.stop()
+            if sweeper_task:
+                sweeper_task.cancel()
+
+        resolver._sweeper = sweeper
+        app.state.sweeper = sweeper
+
     @app.exception_handler(KeyError)
     async def _not_found(_req: Request, exc: KeyError):
         return JSONResponse(status_code=404, content={"error": str(exc)})
@@ -55,8 +86,42 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
     # ------------------------------------------------------------- health
     @app.get("/health")
     async def health():
-        return {"status": "ok", "version": __version__,
-                "uptime_s": round(time.time() - START_TIME, 1)}
+        result: dict = {"status": "ok", "version": __version__,
+                        "uptime_s": round(time.time() - START_TIME, 1)}
+        sweeper = app.state.sweeper if hasattr(app.state, "sweeper") else None
+        if sweeper:
+            result["sweeper"] = {"running": sweeper._running,
+                                 "shadow_mode": sweeper.shadow_mode}
+        return result
+
+    # --------------------------------------------------- self-healing API
+    @app.get("/api/selfheal/status")
+    async def selfheal_status():
+        sweeper = app.state.sweeper if hasattr(app.state, "sweeper") else None
+        if sweeper is None:
+            return {"enabled": False}
+        c = sqlite3.connect(sweeper.db_path)
+        evs = []
+        if c:
+            try:
+                c.row_factory = sqlite3.Row
+                evs = [dict(r) for r in c.execute(
+                    "SELECT * FROM health_events ORDER BY id DESC LIMIT 20").fetchall()]
+            except Exception:
+                pass
+            c.close()
+        return {"enabled": True, "shadow_mode": sweeper.shadow_mode,
+                "upgrade_enabled": sweeper.upgrade_enabled,
+                "items_per_hour": sweeper.items_per_hour,
+                "events": evs}
+
+    @app.post("/api/selfheal/check-now")
+    async def selfheal_check_now():
+        sweeper = app.state.sweeper if hasattr(app.state, "sweeper") else None
+        if sweeper is None:
+            return {"error": "sweeper not enabled"}
+        await sweeper.sweep()
+        return {"result": "sweep complete"}
 
     @app.get("/status")
     async def status():
