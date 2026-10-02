@@ -65,7 +65,8 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         @app.on_event("startup")
         async def _start_sweeper():
             nonlocal sweeper_task
-            sweeper_task = asyncio.get_event_loop().create_task(sweeper.run())
+            if getattr(settings, "sweeper_autostart", True):
+                sweeper_task = asyncio.get_event_loop().create_task(sweeper.run())
 
         @app.on_event("shutdown")
         async def _stop_sweeper():

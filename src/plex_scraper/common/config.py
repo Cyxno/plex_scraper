@@ -74,6 +74,7 @@ class Settings:
     # health sweeper
     sweeper_items_per_hour: int = 100
     sweeper_enabled: bool = False
+    sweeper_autostart: bool = True
     sweeper_shadow_mode: bool = True
     sweeper_upgrade_enabled: bool = False
     sweeper_upgrade_min_score_delta: float = 5.0
@@ -120,6 +121,7 @@ class Settings:
             ),
             sweeper_items_per_hour=_int("SWEEPER_ITEMS_PER_HOUR", cls.sweeper_items_per_hour),
             sweeper_enabled=_bool("SWEEPER_ENABLED", cls.sweeper_enabled),
+            sweeper_autostart=_bool("SWEEPER_AUTOSTART", cls.sweeper_autostart),
             sweeper_shadow_mode=_bool("SWEEPER_SHADOW_MODE", cls.sweeper_shadow_mode),
             sweeper_upgrade_enabled=_bool("SWEEPER_UPGRADE_ENABLED", cls.sweeper_upgrade_enabled),
             sweeper_upgrade_min_score_delta=float(
