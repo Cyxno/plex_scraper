@@ -74,8 +74,8 @@ fcH+='<tr><td class="'+c+'">'+esc(cat)+'</td><td>'+v.count+'</td><td>'+(v.last?n
 fcH+='</table>';
 document.getElementById('fc').innerHTML=fcH;
 const fl=s.failures||[];
-let fH='<table><tr><th>rk</th><th>title</th><th>state</th><th>category</th><th>tries</th><th></th></tr>';
-fl.forEach(r=>{fH+='<tr><td>'+r.rk+'</td><td>'+esc(r.title||'')+'</td><td>'+r.status+'</td><td class="warn">'+esc(r.category||'')+'</td><td>'+r.attempts+'</td><td><a href="./ui/trace/'+r.rk+'">trace</a></td></tr>'});
+let fH='<table><tr><th>rk</th><th>media</th><th>state</th><th>category</th><th>tries</th><th>IDs</th><th></th></tr>';
+fl.forEach(r=>{const dt=esc(r.display_title||r.title||'');const ids=[];if(r.imdb_id)ids.push('<a href="https://www.imdb.com/title/'+r.imdb_id+'/" target="_blank">IMDb</a>');if(r.tmdb_id)ids.push('<a href="https://www.themoviedb.org/movie/'+r.tmdb_id+'" target="_blank">TMDb</a>');if(r.tvdb_id)ids.push('<a href="https://www.thetvdb.com/?id='+r.tvdb_id+'&tab=series" target="_blank">TVDb</a>');fH+='<tr><td>'+r.rk+'</td><td><b>'+dt+'</b></td><td>'+r.status+'</td><td class="warn">'+esc(r.category||'')+'</td><td>'+r.attempts+'</td><td>'+(ids.length?ids.join(' '):'\u2014')+'</td><td><a href="./ui/trace/'+r.rk+'">trace</a></td></tr>'});
 fH+='</table>';
 document.getElementById('f').innerHTML=fl.length?fH:'<span class="ok">no failures</span>';
 }

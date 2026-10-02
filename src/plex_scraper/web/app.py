@@ -148,7 +148,8 @@ def create_web_app(settings: Settings) -> FastAPI:
             mc = {r["status"]: r["c"] for r in db.execute(
                 "SELECT status, COUNT(*) c FROM queue GROUP BY status").fetchall()}
             for r in db.execute(
-                "SELECT rk,title,status,last_error,fail_class,attempts,updated_at "
+                "SELECT rk,title,gp,season,episode,year,kind,status,last_error,"
+                "fail_class,attempts,updated_at "
                 "FROM queue WHERE status IN ('FAILED_RETRYABLE','FAILED_FINAL') "
                 "ORDER BY updated_at DESC").fetchall():
                 d = dict(r)
@@ -170,12 +171,29 @@ def create_web_app(settings: Settings) -> FastAPI:
                     entry["last"] = ts
                 if not entry["first"] or ts < entry["first"]:
                     entry["first"] = ts
+        # split: actuele failures vs recovered (resolver READY = hersteld)
+        current_failures = []
+        recovered = []
+        resolver_map = {}
+        try:
+            for i in (items or []):
+                resolver_map[i["plex_path"]] = i
+        except Exception:
+            pass
+        for d in fl:
+            m = resolver_map.get(d.get("plex_path_rel"))
+            if m and m["status"] == "READY":
+                d["recovered"] = True
+                recovered.append(d)
+            else:
+                current_failures.append(d)
         return {
             "resolver_health": rh,
             "resolver_error": resolver_err,
             "migration_history": mc,
             "failure_groups": fg,
-            "failures": fl[:25],
+            "failures": current_failures[:25],
+            "recovered": recovered[:25],
             "mounts": _mounts(),
             "last_ok_resolve": (last_ok or None) and {
                 "ts": last_ok.get("ts"), "item_id": last_ok.get("item_id"),
@@ -320,9 +338,16 @@ def create_web_app(settings: Settings) -> FastAPI:
         if row["status"] == "NO_SOURCE":
             current = "NO_SOURCE"
         migration_history = row.get("status") or None
+        # identity uit de "media identity" mark-stap
+        identity = ""
+        for s in steps:
+            if s["step"] == "media identity":
+                identity = s["detail"]
+                break
         return {"rk": rk, "steps": steps, "first_fail": first_fail,
                 "current_health": current,
-                "migration_history": migration_history}
+                "migration_history": migration_history,
+                "identity": identity}
 
     def resolver_ok(items):
         return items is not None
