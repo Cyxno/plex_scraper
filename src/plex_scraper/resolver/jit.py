@@ -159,16 +159,31 @@ class JitController:
         n = sample_bytes or cfg.sample_bytes
 
         async def _run() -> dict:
-            torrent = await self.resolver.provider.ensure_torrent(
-                src_info_hash(source), source.torrent_name)
-            url = await self.resolver.provider.get_stream_url(
-                torrent.torrent_id, source.file_id or 0)
+            # current-source probe hergebruikt de link-cache (geen requestdl
+            # op het play-moment); deadline per sample houdt de preflight
+            # bounded — een sample die het budget overschrijdt is sowieso
+            # geen FAST
+            try:
+                url = await self.resolver._link_for(source)
+            except Exception:                          # noqa: BLE001
+                torrent = await self.resolver.provider.ensure_torrent(
+                    src_info_hash(source), source.torrent_name)
+                url = await self.resolver.provider.get_stream_url(
+                    torrent.torrent_id, source.file_id or 0)
             samples = []
             errors = 0
+            deadline = cfg.ttfb_max_s + 1.0
             for off in {0, max(0, int(source.size or n) // 2)}:
                 t0 = time.monotonic()
                 try:
-                    data = await self.resolver.provider.read_range(url, off, n)
+                    data = await asyncio.wait_for(
+                        self.resolver.provider.read_range(url, off, n),
+                        timeout=deadline)
+                except asyncio.TimeoutError:
+                    errors += 1
+                    samples.append({"ttfb_s": round(deadline, 2), "mbit": 0.0,
+                                    "short": True})
+                    continue
                 except Exception:                      # noqa: BLE001
                     errors += 1
                     continue
