@@ -247,7 +247,7 @@ def test_throughput_degraded_needs_three_strikes(tmp_path):
     evs = sqlite3.connect(sw.db_path).execute(
         "SELECT event, count(*) FROM health_events GROUP BY event").fetchall()
     kinds = dict(evs)
-    assert kinds.get("throughput_strike") == 2
+    assert kinds.get("throughput_strike") == 1   # alleen strike-1 wordt gelogd
     assert kinds.get("throughput_degraded") == 1
 
 

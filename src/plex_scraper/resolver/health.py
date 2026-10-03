@@ -246,7 +246,9 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
             self._log_json(plex_path, "throughput_degraded", {
                 "mbit": mbit, "ttfb_s": ttfb, "required_mbit": required,
                 "strikes": strikes})
-        elif plex_path not in self._degraded:
+        elif strikes == 1 and plex_path not in self._degraded:
+            # alleen de eerste observatie loggen: strikes 2+ zijn ruis,
+            # de echte classificatie komt via throughput_degraded
             self._log_event(plex_path, "throughput_strike",
                             json.dumps({"strike": strikes,
                                         "of": self.throughput_strikes,
