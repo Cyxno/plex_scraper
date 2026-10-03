@@ -72,6 +72,11 @@ class HealthSweeper:
         self._degraded: set[str] = set()
         self._last_probe: dict[str, float] = {}
         self._pause_logged_until = 0.0
+        # FASE 4/6: per-item health-state + hysteresis
+        self._tp_state: dict[str, str] = {}       # HEALTHY_FOR_MEDIA | DEGRADED_THROUGHPUT | BROKEN
+        self._tp_samples: dict[str, list] = {}    # laatste metingen per pad
+        self._tp_good: dict[str, int] = {}        # opeenvolgende goede checks
+        self.degrade_clear_good = 2               # goede checks om te clearen
         self._interval = 3600.0 / max(items_per_hour, 1)
         self._running = False
         self._task = None
@@ -184,6 +189,7 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                 h = (await client.post(
                     f"{RESOLVER_BASE}/media/{item.id}/open")).json()
                 handle = h["handle"]
+                handle_size = int(h.get("size") or 0)
 
                 async def _read(url: str) -> bytes:
                     # één retry binnen dezelfde check: koude TorBox-starts
@@ -201,58 +207,120 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                                 await asyncio.sleep(2.0)
                     raise last
 
-                # DOEL 7: eerste read = 1 MB, meten TTFB + doorvoer; deze
-                # read dient tegelijk als EBML-check (geen extra request)
-                t0 = time.monotonic()
-                d1 = await _read(
-                    f"{RESOLVER_BASE}/stream/{handle}?offset=0&length=1048576")
-                ttfb_s = round(time.monotonic() - t0, 2)
-                mbit = len(d1) * 8 / 1e6 / max(ttfb_s, 1e-6)
+                # FASE 5: representatieve meting — 3 offsets (begin/midden/
+                # later deel) × 1 MB, elk met TTFB; de eerste read dient
+                # tevens als mkv/MP4-magic-check. Bounded: totaal 3 MB.
+                offsets = self._sample_offsets(item, handle_size)
+                samples = []
+                d1 = b""
+                for i, off in enumerate(offsets):
+                    t0 = time.monotonic()
+                    data = await _read(
+                        f"{RESOLVER_BASE}/stream/{handle}?offset={off}&length=1048576")
+                    dt = max(time.monotonic() - t0, 1e-6)
+                    mbit = len(data) * 8 / 1e6 / dt
+                    samples.append({"offset": off, "ttfb_s": round(dt, 2),
+                                    "mbit": round(mbit, 1)})
+                    if i == 0:
+                        d1 = data
                 d2 = await _read(
                     f"{RESOLVER_BASE}/stream/{handle}?offset=65536&length=65536")
                 await client.delete(f"{RESOLVER_BASE}/open/{handle}")
             result["healthy"] = (len(d1) >= 64 and len(d2) == 65536
                                  and (d1[:4] == bytes.fromhex("1a45dfa3")
                                       or d1[4:8] == b"ftyp"))
-            result["ttfb_s"] = ttfb_s
-            result["mbit"] = round(mbit, 1)
-            result["required_mbit"] = round(self._required_mbit(), 1)
+            worst = min(samples, key=lambda s: s["mbit"])
+            result["ttfb_s"] = max(s["ttfb_s"] for s in samples)
+            result["mbit"] = worst["mbit"]              # FASE 5: min-chunk telt
+            result["samples"] = samples
+            # FASE 2: per-media requirement (bitrate × marge), niet globaal
+            profile = self.resolver.media_profile(item, handle_size)
+            required = profile.required_mbit(self.throughput_margin)
+            result["required_mbit"] = round(required, 1)
+            result["bitrate_confidence"] = profile.confidence
             self._throughput_observe(item.plex_path, result)
         except Exception as e:
             result["error"] = repr(e)[:80]
+            # leesfaal → BROKEN-traject (bestaande strikes/repair-flow)
+            self._mark_broken(item.plex_path)
         if not result["healthy"]:
             result["repair_needed"] = True
         return result
 
-    # ------------------------------------------------- DOEL 7: throughput
+    def _sample_offsets(self, item, size: int) -> list[int]:
+        """begin / midden / later deel — binnen de bestandsgrens."""
+        if not size or size <= 3 * 1048576:
+            return [0]
+        mid = size // 2
+        late = int(size * 0.8)
+        return [0, min(mid, size - 1048576), min(late, size - 1048576)]
+
+    # --------------------------------------- FASE 4/6: health-statemachine
+    def throughput_state(self, plex_path: str) -> str:
+        return self._tp_state.get(plex_path, "HEALTHY_FOR_MEDIA")
+
+    def throughput_samples(self, plex_path: str) -> list[dict]:
+        return list(self._tp_samples.get(plex_path, []))
+
+    def _mark_broken(self, plex_path: str) -> None:
+        if self._tp_state.get(plex_path) != "BROKEN":
+            self._tp_state[plex_path] = "BROKEN"
+
     def _throughput_observe(self, plex_path: str, result: dict) -> None:
-        """Shadow-classificatie: pas na N opeenvolgende slechte observaties
-        (strikes) ontstaat DEGRADED_THROUGHPUT; één trage meting nooit."""
+        """FASE 6: strikes met hysteresis — 1 slechte meting = observatie,
+        2 = warning, 3 = DEGRADED_THROUGHPUT; herstel pas na 2 goede checks."""
         required = result.get("required_mbit", 0)
         mbit = result.get("mbit", 0.0)
         ttfb = result.get("ttfb_s", 0.0)
+        samples = result.get("samples") or []
+        self._tp_samples[plex_path] = (self._tp_samples.get(plex_path, []) + samples)[-6:]
         bad = mbit < required or ttfb > 5.0
+        if plex_path in self._degraded:
+            self._tp_state[plex_path] = "DEGRADED_THROUGHPUT"
+        elif self._tp_state.get(plex_path) != "BROKEN":
+            self._tp_state[plex_path] = "HEALTHY_FOR_MEDIA"
         if not bad:
+            self._tp_good[plex_path] = self._tp_good.get(plex_path, 0) + 1
             if plex_path in self._degraded:
-                self._degraded.discard(plex_path)
-                self._log_json(plex_path, "throughput_recovered",
-                               {"mbit": mbit, "required_mbit": required})
-            self._tp_strikes.pop(plex_path, None)
+                if self._tp_good[plex_path] >= self.degrade_clear_good:
+                    self._degraded.discard(plex_path)
+                    self._tp_state[plex_path] = "HEALTHY_FOR_MEDIA"
+                    self._tp_strikes.pop(plex_path, None)
+                    self._log_json(plex_path, "throughput_recovered",
+                                   {"mbit": mbit, "required_mbit": required,
+                                    "good_checks": self._tp_good[plex_path]})
+            else:
+                self._tp_strikes.pop(plex_path, None)
             return
+        self._tp_good[plex_path] = 0
         strikes = self._tp_strikes.get(plex_path, 0) + 1
         self._tp_strikes[plex_path] = strikes
         if strikes >= self.throughput_strikes and plex_path not in self._degraded:
             self._degraded.add(plex_path)
+            self._tp_state[plex_path] = "DEGRADED_THROUGHPUT"
             self._log_json(plex_path, "throughput_degraded", {
                 "mbit": mbit, "ttfb_s": ttfb, "required_mbit": required,
-                "strikes": strikes})
+                "strikes": strikes,
+                "bitrate_confidence": result.get("bitrate_confidence", "floor")})
+        elif strikes == 2 and plex_path not in self._degraded:
+            self._log_json(plex_path, "throughput_warning", {
+                "mbit": mbit, "required_mbit": required})
         elif strikes == 1 and plex_path not in self._degraded:
-            # alleen de eerste observatie loggen: strikes 2+ zijn ruis,
-            # de echte classificatie komt via throughput_degraded
             self._log_event(plex_path, "throughput_strike",
                             json.dumps({"strike": strikes,
                                         "of": self.throughput_strikes,
-                                        "mbit": mbit, "ttfb_s": ttfb}))
+                                        "mbit": mbit, "ttfb_s": ttfb,
+                                        "required_mbit": required}))
+
+    # --------------------------------------------------- FASE 14: policy
+    def _candidate_acceptable(self, cand_mbit: float, current_mbit: float,
+                              required: float) -> bool:
+        """Kandidaat alleen beter als boven required × headroom ÉN
+        aantoonbaar ≥ min-improvement beter dan current (configureerbaar)."""
+        headroom = getattr(self, "candidate_headroom", 1.2)
+        min_gain = getattr(self, "candidate_min_improvement", 1.5)
+        return (cand_mbit >= required * headroom
+                and cand_mbit / max(current_mbit, 0.1) >= min_gain)
 
     async def _throughput_would_switch(self, item, measured_mbit: float) -> None:
         """DOEL 8: shadow throughput-repair — zoek kandidaten, identity-gate,
@@ -291,9 +359,12 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                 url, min(int(1e8), max(0, int(src.size or 0) - 8388608)), 8388608)
             dt = max(time.monotonic() - t0, 1e-6)
             cand_mbit = len(data) * 8 / 1e6 / dt
-            required = self._required_mbit()
+            # FASE 2: per-media requirement voor dit item (niet de globale floor)
+            size = int(src.size or 0)
+            profile = self.resolver.media_profile(item, size)
+            required = profile.required_mbit(self.throughput_margin)
             improvement = cand_mbit / max(measured_mbit, 0.1)
-            if cand_mbit >= required and improvement >= 1.5:
+            if self._candidate_acceptable(cand_mbit, measured_mbit, required):
                 self._log_json(plex_path, "throughput_would_switch", {
                     "current_mbit": round(measured_mbit, 1),
                     "candidate_mbit": round(cand_mbit, 1),

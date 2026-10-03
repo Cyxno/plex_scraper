@@ -90,6 +90,11 @@ class Settings:
     sweeper_throughput_margin: float = 1.5
     sweeper_throughput_strikes: int = 3
     sweeper_throughput_probe_interval_s: float = 3600.0
+    stream_two_way_enabled: bool = True
+    adaptive_two_way_min_mbit: float = 40.0
+    adaptive_fallback_errors: int = 2
+    candidate_min_improvement: float = 1.5
+    candidate_headroom: float = 1.2
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -154,6 +159,15 @@ class Settings:
             sweeper_throughput_probe_interval_s=float(os.environ.get(
                 "SWEEPER_THROUGHPUT_PROBE_INTERVAL_S",
                 cls.sweeper_throughput_probe_interval_s)),
+            stream_two_way_enabled=_bool("STREAM_TWO_WAY_ENABLED", cls.stream_two_way_enabled),
+            adaptive_two_way_min_mbit=float(os.environ.get(
+                "ADAPTIVE_TWO_WAY_MIN_MBIT", cls.adaptive_two_way_min_mbit)),
+            adaptive_fallback_errors=_int(
+                "ADAPTIVE_FALLBACK_ERRORS", cls.adaptive_fallback_errors),
+            candidate_min_improvement=float(
+                os.environ.get("CANDIDATE_MIN_IMPROVEMENT", cls.candidate_min_improvement)),
+            candidate_headroom=float(
+                os.environ.get("CANDIDATE_HEADROOM", cls.candidate_headroom)),
             torrent_ready_max_polls=_int("TORBOX_MAX_POLLS", cls.torrent_ready_max_polls),
             max_provider_adds_per_resolve=_int(
                 "MAX_PROVIDER_ADDS_PER_RESOLVE", cls.max_provider_adds_per_resolve),

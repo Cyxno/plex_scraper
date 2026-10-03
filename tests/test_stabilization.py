@@ -260,7 +260,10 @@ def test_throughput_recovers_on_good_observation(tmp_path):
     assert "p" in sw._degraded
     sw._throughput_observe("p", {"mbit": req * 4, "ttfb_s": 0.3,
                                  "required_mbit": req})
-    assert "p" not in sw._degraded
+    assert "p" in sw._degraded                       # FASE 6: 1 goede check cleart niet
+    sw._throughput_observe("p", {"mbit": req * 4, "ttfb_s": 0.3,
+                                 "required_mbit": req})
+    assert "p" not in sw._degraded                   # pas na 2 goede checks
     kinds = dict(sqlite3.connect(sw.db_path).execute(
         "SELECT event, count(*) FROM health_events GROUP BY event").fetchall())
     assert kinds.get("throughput_recovered") == 1

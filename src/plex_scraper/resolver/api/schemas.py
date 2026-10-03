@@ -12,6 +12,8 @@ def item_out(item: m.MediaItem) -> dict:
         "tvdb_id": item.tvdb_id, "plex_path": item.plex_path,
         "status": item.status, "generation": item.generation,
         "desired": item.desired,
+        "duration_s": item.duration_s,
+        "media_bitrate_mbit": item.media_bitrate_mbit,
     }
 
 

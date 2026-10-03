@@ -69,6 +69,8 @@ def _row_to_item(row: sqlite3.Row) -> m.MediaItem:
         imdb_id=row["imdb_id"], tmdb_id=row["tmdb_id"], tvdb_id=row["tvdb_id"],
         status=row["status"], generation=row["generation"],
         desired=json.loads(row["desired"] or "{}"),
+        duration_s=row["duration_s"] if "duration_s" in row.keys() else None,
+        media_bitrate_mbit=row["media_bitrate_mbit"] if "media_bitrate_mbit" in row.keys() else None,
         created_at=row["created_at"], updated_at=row["updated_at"],
     )
 
@@ -95,6 +97,13 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         with self._conn:
             self._conn.executescript(_SCHEMA)
+            # migrate: media-bitrate kolommen (adaptive-throughput fase)
+            for col, ddl in (("duration_s", "ALTER TABLE media_items ADD COLUMN duration_s REAL"),
+                             ("media_bitrate_mbit", "ALTER TABLE media_items ADD COLUMN media_bitrate_mbit REAL")):
+                try:
+                    self._conn.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass                                 # kolom bestaat al
 
     # ------------------------------------------------------------- plumbing
     async def run(self, fn: Callable[[sqlite3.Connection], Any]) -> Any:
@@ -109,12 +118,14 @@ class Store:
         def fn(c: sqlite3.Connection):
             c.execute(
                 "INSERT INTO media_items (id,kind,title,plex_path,series,season,episode,year,"
-                "imdb_id,tmdb_id,tvdb_id,status,generation,desired,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "imdb_id,tmdb_id,tvdb_id,status,generation,desired,created_at,updated_at,"
+                "duration_s,media_bitrate_mbit) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (item.id, item.kind, item.title, item.plex_path, item.series, item.season,
                  item.episode, item.year, item.imdb_id, item.tmdb_id, item.tvdb_id,
                  item.status, item.generation, json.dumps(item.desired),
-                 item.created_at, item.updated_at))
+                 item.created_at, item.updated_at,
+                 item.duration_s, item.media_bitrate_mbit))
         await self.run(fn)
         return item
 
@@ -123,8 +134,10 @@ class Store:
 
         def fn(c: sqlite3.Connection):
             c.execute(
-                "UPDATE media_items SET status=?, generation=?, desired=?, updated_at=? WHERE id=?",
-                (item.status, item.generation, json.dumps(item.desired), item.updated_at, item.id))
+                "UPDATE media_items SET status=?, generation=?, desired=?, updated_at=?, "
+                "duration_s=?, media_bitrate_mbit=? WHERE id=?",
+                (item.status, item.generation, json.dumps(item.desired), item.updated_at,
+                 item.duration_s, item.media_bitrate_mbit, item.id))
         await self.run(fn)
 
     async def reconcile_stale(self, timeout_s: float) -> list[dict]:

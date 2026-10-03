@@ -20,18 +20,21 @@ from plex_scraper.scraper.providers.base import DebridProvider, NotReadyError, P
 from plex_scraper.common.scoring.release_parser import parse_release
 from plex_scraper.scraper.scrapers.base import Scraper, TorrentCandidate
 from plex_scraper.resolver.selfheal import identity_gate
+from plex_scraper.resolver import media as m_prof
+from plex_scraper.resolver.stream import AdaptiveRangeReader
 from .caches import CacheSet
 from .store import Store
-from .stream import RangeReader
 
 
 @dataclass
 class SessionContext:
     session: m.Session
     source: m.Source
-    reader: RangeReader
+    reader: AdaptiveRangeReader
     opened_at: float = field(default_factory=time.monotonic)
     last_read_at: float = 0.0     # wall-clock; 0 = nog niet gelezen
+    required_mbit: float = 0.0    # media-aware vereiste (FASE 2)
+    bitrate_confidence: str = "floor"
 
 
 class UnresolvedError(Exception):
@@ -54,6 +57,10 @@ class Resolver:
             "resolutions": 0, "fallbacks": 0, "generation_switches": 0,
             "reads": 0, "read_bytes": 0, "resolve_latency_sum": 0.0,
             "request_latency_sum": 0.0, "request_count": 0,
+            # adaptive read-ahead (FASE 8/12/20)
+            "prefetch_bytes": 0, "prefetch_cancelled_bytes": 0,
+            "prefetch_hits": 0, "prefetch_errors": 0,
+            "adaptive_fallbacks": 0, "two_way_sessions": 0,
         }
 
     # ------------------------------------------------------------ lifecycle
@@ -442,6 +449,28 @@ class Resolver:
         return None
 
     # ------------------------------------------------------------ sessions
+    def media_profile(self, item: m.MediaItem, size: int) -> m_prof.MediaProfile:
+        """FASE 2/3: per-media throughput-profiel (bitrate + confidence)."""
+        return m_prof.build_profile(
+            size_bytes=size or None,
+            media_bitrate_mbit=item.media_bitrate_mbit,
+            duration_s=item.duration_s,
+            floor_mbit=self.s.playback_min_mbit)
+
+    def two_way_for(self, item: m.MediaItem, required_mbit: float) -> bool:
+        """FASE 7/12: 2-way read-ahead alleen als deze media er belang bij
+        heeft (required boven drempel) óf al gedegradeerd is gemeten.
+        Lage-bitrate content blijft gewoon single-stream."""
+        if not getattr(self.s, "stream_two_way_enabled", True):
+            return False
+        if required_mbit >= self.s.adaptive_two_way_min_mbit:
+            return True
+        sweeper = getattr(self, "_sweeper", None)
+        if sweeper is not None and item.plex_path in getattr(
+                sweeper, "degraded_throughput", set()):
+            return True
+        return False
+
     async def open_handle(self, item_id: str) -> SessionContext:
         item = await self.store.get_item(item_id)
         if item is None:
@@ -457,15 +486,27 @@ class Resolver:
         if source is None:
             raise UnresolvedError(f"no working source for {item.plex_path}")
 
-        reader = RangeReader(self, source.id, source.size, self.s.stream_readahead_bytes)
+        profile = self.media_profile(item, source.size)
+        required = profile.required_mbit(self.s.sweeper_throughput_margin)
+        two_way = self.two_way_for(item, required)
+        reader = AdaptiveRangeReader(self, source.id, source.size,
+                                     self.s.stream_readahead_bytes,
+                                     two_way=two_way,
+                                     fallback_after_errors=self.s.adaptive_fallback_errors)
+        if two_way:
+            self.metrics["two_way_sessions"] += 1
         session = m.Session(handle=m.new_id(), media_item_id=item_id,
                             source_id=source.id, generation=source.generation,
                             size=source.size)
         await self.store.create_session(session)
         ctx = SessionContext(session=session, source=source, reader=reader)
+        ctx.required_mbit = round(required, 1)
+        ctx.bitrate_confidence = profile.confidence
         self.sessions[session.handle] = ctx
         await self._evt("session_opened", item_id=item_id, handle=session.handle,
-              generation=source.generation, size=source.size)
+              generation=source.generation, size=source.size,
+              read_mode="2way" if two_way else "single",
+              required_mbit=round(required, 1))
         return ctx
 
     def get_session(self, handle: str) -> SessionContext:
@@ -490,6 +531,7 @@ class Resolver:
         ctx = self.sessions.pop(handle, None)
         if ctx is None:
             return
+        ctx.reader.close()               # FASE 18: prefetch cancelen
         ctx.session.state = m.SessionState.CLOSED.value
         ctx.session.closed_at = m.now()
         await self.store.close_session(handle)

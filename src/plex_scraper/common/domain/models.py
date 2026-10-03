@@ -60,6 +60,8 @@ class MediaItem:
     status: str = ItemStatus.NO_SOURCE.value
     generation: int = 0
     desired: dict = field(default_factory=dict)   # quality intent (FASE 15)
+    duration_s: float | None = None               # mediaduurtijd (Plex/derive)
+    media_bitrate_mbit: float | None = None       # totale container-bitrate
     created_at: float = field(default_factory=now)
     updated_at: float = field(default_factory=now)
 

@@ -121,7 +121,9 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
                             "item_id": ctx.session.media_item_id,
                             "read_count": ctx.session.read_count,
                             "size": ctx.session.size,
-                            "idle_s": round(time.time() - last, 1)})
+                            "idle_s": round(time.time() - last, 1),
+                            "read_mode": "2way" if getattr(ctx.reader, "two_way", False) else "single",
+                            "required_mbit": getattr(ctx, "required_mbit", 0.0)})
         return {"active": len(out), "streams": out,
                 "threshold_s": 90}
 
@@ -152,6 +154,11 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
                 "playback_pause": sweeper.playback_pause,
                 "active_playback": await sweeper.playback_active_count(),
                 "degraded_throughput": sorted(sweeper.degraded_throughput),
+                "health_states": {
+                    "HEALTHY_FOR_MEDIA": sum(
+                        1 for v in sweeper._tp_state.values() if v == "HEALTHY_FOR_MEDIA"),
+                    "DEGRADED_THROUGHPUT": len(sweeper._degraded),
+                    "BROKEN": sum(1 for v in sweeper._tp_state.values() if v == "BROKEN")},
                 "counts_24h": counts,
                 "events": evs}
 
@@ -206,6 +213,10 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
             "reads": r["reads"],
             "read_bytes": r["read_bytes"],
             "caches": resolver.caches.stats(),
+            "adaptive": {k: resolver.metrics[k] for k in
+                         ("prefetch_bytes", "prefetch_cancelled_bytes",
+                          "prefetch_hits", "prefetch_errors",
+                          "adaptive_fallbacks", "two_way_sessions")},
             "resources": {"rss_kb": process_rss_kb(), "cpu_seconds": round(process_cpu_seconds(), 3)},
             "recent_events": (await resolver.store.recent_events(20))[::-1],
         }
@@ -248,7 +259,41 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         item = await resolver.update_desired(item_id, payload.get("desired") or {})
         if item is None:
             raise KeyError(f"unknown media item {item_id}")
+        # FASE 2: media-aware bitrate/kENNIS kunnen per item gezet worden
+        for key in ("duration_s", "media_bitrate_mbit"):
+            if key in payload and payload[key] is not None:
+                setattr(item, key, float(payload[key]))
+        if any(key in payload for key in ("duration_s", "media_bitrate_mbit")):
+            await resolver.store.update_item(item)
         return item_out(item)
+
+    @app.get("/media/{item_id}/throughput")
+    async def media_throughput(item_id: str):
+        """FASE 19: media-aware throughput-weergave voor één item."""
+        item = await resolver.store.get_item(item_id)
+        if item is None:
+            raise KeyError(f"unknown media item {item_id}")
+        active = await resolver._active_source(item_id)
+        size = active.size if active else 0
+        profile = resolver.media_profile(item, size)
+        required = profile.required_mbit(resolver.s.sweeper_throughput_margin)
+        sweeper = getattr(resolver, "_sweeper", None)
+        state, samples = "UNKNOWN", []
+        if sweeper is not None:
+            state = sweeper.throughput_state(item.plex_path)
+            samples = sweeper.throughput_samples(item.plex_path)
+        # read-mode zoals de sessies die nu openstaan hem kiezen
+        two_way = resolver.two_way_for(item, required)
+        return {"item_id": item_id,
+                "title": item.title,
+                "media_bitrate_mbit": round(profile.bitrate_mbit, 1),
+                "bitrate_confidence": profile.confidence,
+                "duration_s": item.duration_s,
+                "size_bytes": size,
+                "required_mbit": round(required, 1),
+                "state": state,
+                "read_mode": "ADAPTIVE_2WAY" if two_way else "SINGLE",
+                "samples": samples}
 
     @app.delete("/media/{item_id}")
     async def delete_media(item_id: str):
