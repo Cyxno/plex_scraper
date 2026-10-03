@@ -471,7 +471,7 @@ class Resolver:
             return True
         return False
 
-    async def open_handle(self, item_id: str) -> SessionContext:
+    async def open_handle(self, item_id: str, two_way: bool | None = None) -> SessionContext:
         item = await self.store.get_item(item_id)
         if item is None:
             raise KeyError(f"unknown media item {item_id}")
@@ -488,7 +488,8 @@ class Resolver:
 
         profile = self.media_profile(item, source.size)
         required = profile.required_mbit(self.s.sweeper_throughput_margin)
-        two_way = self.two_way_for(item, required)
+        if two_way is None:
+            two_way = self.two_way_for(item, required)
         reader = AdaptiveRangeReader(self, source.id, source.size,
                                      self.s.stream_readahead_bytes,
                                      two_way=two_way,

@@ -187,7 +187,7 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
             t = httpx.Timeout(90.0, read=120.0)
             async with httpx.AsyncClient(timeout=t) as client:
                 h = (await client.post(
-                    f"{RESOLVER_BASE}/media/{item.id}/open")).json()
+                    f"{RESOLVER_BASE}/media/{item.id}/open?two_way=0")).json()
                 handle = h["handle"]
                 handle_size = int(h.get("size") or 0)
 

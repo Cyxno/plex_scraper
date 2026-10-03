@@ -320,10 +320,14 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
 
     # ------------------------------------------- internal session/stream
     @app.post("/media/{item_id}/open")
-    async def open_media(item_id: str):
-        ctx = await resolver.open_handle(item_id)
+    async def open_media(item_id: str, two_way: int | None = None):
+        # two_way=0: health-checks/achtergrond willen géén prefetch
+        ctx = await resolver.open_handle(
+            item_id, two_way=None if two_way is None else bool(two_way))
         return {"handle": ctx.session.handle, "size": ctx.session.size,
                 "generation": ctx.session.generation,
+                "read_mode": "2way" if getattr(ctx.reader, "two_way", False) else "single",
+                "required_mbit": getattr(ctx, "required_mbit", 0.0),
                 "source": source_out(ctx.source)}
 
     @app.get("/stream/{handle}")
