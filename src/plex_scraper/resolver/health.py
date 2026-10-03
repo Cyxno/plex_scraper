@@ -212,7 +212,8 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                     f"{RESOLVER_BASE}/stream/{handle}?offset=65536&length=65536")
                 await client.delete(f"{RESOLVER_BASE}/open/{handle}")
             result["healthy"] = (len(d1) >= 64 and len(d2) == 65536
-                                 and d1[:4] == bytes.fromhex("1a45dfa3"))
+                                 and (d1[:4] == bytes.fromhex("1a45dfa3")
+                                      or d1[4:8] == b"ftyp"))
             result["ttfb_s"] = ttfb_s
             result["mbit"] = round(mbit, 1)
             result["required_mbit"] = round(self._required_mbit(), 1)
