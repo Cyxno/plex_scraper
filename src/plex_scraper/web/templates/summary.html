@@ -61,6 +61,12 @@ const ap=sh.active_playback||0;
 if(sh.playback_pause&&ap>0){shH+='<div class="alert">\u23f8 SWEEPER GEPAUZEERD \u2014 ACTIEVE PLAYBACK ('+ap+' stream'+(ap>1?'s':'')+')</div>';}
 const modeB=sh.mode==='auto-repair'?'<span class="badge ok">auto-repair</span>':'<span class="badge warn">shadow</span>';
 shH+='<p>'+modeB+' <span class="badge info">upgrade: '+esc(sh.upgrade)+'</span> <span class="muted">'+sh.items_per_hour+' items/u · no_source in backoff: '+sh.no_source_tracked+(ap>0?' · streams actief: '+ap:'')+'</span></p>';
+const hs=sh.health_states||{};
+shH+='<table><tr><th>health (media-aware)</th><th>#</th></tr>';
+shH+='<tr><td class="ok">HEALTHY_FOR_MEDIA</td><td>'+(hs.HEALTHY_FOR_MEDIA??0)+'</td></tr>';
+shH+='<tr><td class="warn">DEGRADED_THROUGHPUT</td><td>'+(hs.DEGRADED_THROUGHPUT??0)+'</td></tr>';
+shH+='<tr><td class="bad">BROKEN</td><td>'+(hs.BROKEN??0)+'</td></tr></table>';
+shH+='<p class="muted">per item: /media/{id}/throughput — bitrate, required, gemeten, read mode</p>';
 const cnt=sh.counts_24h||{};
 let cH='<table><tr><th>event (24h)</th><th>#</th></tr>';
 Object.entries(cnt).forEach(([k,v])=>{const cls=(k.indexOf('repair')===0||k.indexOf('no_source_recovered')===0)?'ok':(k.indexOf('_backoff')>0||k.indexOf('strike')>0)?'warn':(k.indexOf('no_alternative')>0||k.indexOf('error')>0)?'bad':'info';cH+='<tr><td class="'+cls+'">'+esc(k)+'</td><td>'+v+'</td></tr>'});
