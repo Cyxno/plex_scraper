@@ -256,7 +256,7 @@ def test_06_same_class_faster_selected(tmp_path):
     alt = _mk_source("alt1", REMUX_HDR)
     cands = [_mk_cand("alt1", REMUX_HDR)]
     r, jit = _jit_with_candidates(cands, [cur, alt], {"alt1": 140.0})
-    d = JitDecision = SimpleNamespace(measured_mbit=20.0, band=DEGRADED,
+    d = JitDecision = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, severity="SEVERELY_DEGRADED",
                                       rejected_quality=0, switched=False,
                                       switched_to=None, note="")
     ok = asyncio.run(jit._search_and_switch(_mk_item(), cur, 65.4, d, background=False))
@@ -271,7 +271,7 @@ def test_07_lower_quality_rejected_when_same_class_exists(tmp_path):
     cands = [_mk_cand("web1", WEBDL), _mk_cand("alt1", REMUX_HDR)]
     r, jit = _jit_with_candidates(cands, [cur, webdl, alt],
                                   {"web1": 500.0, "alt1": 140.0})
-    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0,
+    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0, severity="SEVERELY_DEGRADED",
                         switched=False, switched_to=None, note="")
     asyncio.run(jit._search_and_switch(_mk_item(), cur, 65.4, d, background=False))
     assert r.activated == "alt1"                     # niet de 500 Mbit WEB-DL
@@ -285,7 +285,7 @@ def test_08_only_lower_quality_no_switch_when_downgrade_disabled(tmp_path):
     cands = [_mk_cand("web1", WEBDL)]
     r, jit = _jit_with_candidates(cands, [cur, webdl], {"web1": 500.0},
                                   allow_quality_downgrade=False)
-    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0,
+    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0, severity="SEVERELY_DEGRADED",
                         switched=False, switched_to=None, note="")
     ok = asyncio.run(jit._search_and_switch(_mk_item(), cur, 65.4, d, background=False))
     assert ok is False and r.activated is None
@@ -308,7 +308,7 @@ def test_10_insufficient_candidate_rejected(tmp_path):
     alt = _mk_source("alt1", REMUX_HDR)
     cands = [_mk_cand("alt1", REMUX_HDR)]
     r, jit = _jit_with_candidates(cands, [cur, alt], {"alt1": 30.0})  # < 65.4×1.2
-    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0,
+    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0, severity="SEVERELY_DEGRADED",
                         switched=False, switched_to=None, note="")
     ok = asyncio.run(jit._search_and_switch(_mk_item(), cur, 65.4, d, background=False))
     assert ok is False and r.activated is None
@@ -325,7 +325,7 @@ def test_11_current_retained_until_replacement_verified(tmp_path):
     async def probe_by_hash(item, cand):
         return None                                   # verify faalt
     jit._probe_by_hash = probe_by_hash
-    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0,
+    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0, severity="SEVERELY_DEGRADED",
                         switched=False, switched_to=None, note="")
     ok = asyncio.run(jit._search_and_switch(_mk_item(), cur, 65.4, d, background=False))
     assert ok is False and r.activated is None
@@ -338,7 +338,7 @@ def test_12_atomic_switch_marks_old_delivery_bad(tmp_path):
     alt = _mk_source("alt1", REMUX_HDR)
     cands = [_mk_cand("alt1", REMUX_HDR)]
     r, jit = _jit_with_candidates(cands, [cur, alt], {"alt1": 140.0})
-    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0,
+    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0, severity="SEVERELY_DEGRADED",
                         switched=False, switched_to=None, note="")
     asyncio.run(jit._search_and_switch(_mk_item(), cur, 65.4, d, background=False))
     assert cur.state == "retired"
@@ -387,7 +387,7 @@ def test_15_concurrent_play_safe(tmp_path):
     cands = [_mk_cand("alt1", REMUX_HDR)]
     r, jit = _jit_with_candidates(cands, [cur, alt], {"alt1": 140.0})
     jit._inflight.add("movie.mkv")
-    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0,
+    d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0, severity="SEVERELY_DEGRADED",
                         switched=False, switched_to=None, note="")
     ok = asyncio.run(jit._search_and_switch(_mk_item(), cur, 65.4, d, background=False))
     assert ok is False and r.activated is None
@@ -418,7 +418,7 @@ def test_17_potc_pilot_exact_behavior():
              _mk_cand("dea1", deathy.torrent_name)]
     r, jit = _jit_with_candidates(cands, [cur, fgt, deathy, webdl],
                                   {"web1": 500.0, "fgt1": 61.0, "dea1": 262.3})
-    d = SimpleNamespace(measured_mbit=27.5, band=DEGRADED, rejected_quality=0,
+    d = SimpleNamespace(measured_mbit=27.5, band=DEGRADED, rejected_quality=0, severity="SEVERELY_DEGRADED",
                         switched=False, switched_to=None, note="")
     ok = asyncio.run(jit._search_and_switch(_mk_item(title="Pirates"), cur, 65.4, d, background=False))
     assert ok and r.activated == "dea1"              # REMUX-klasse-prioriteit

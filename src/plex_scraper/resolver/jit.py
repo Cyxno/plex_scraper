@@ -86,12 +86,23 @@ def delivery_band(mbit: float, ttfb_s: float, required: float, cfg) -> str:
     return DEGRADED
 
 
+def current_severity(mbit: float, required: float, cfg) -> str:
+    """FASE-policy: FAST ≥ required · MARGINAL 0,8–1×required ·
+    SEVERELY_DEGRADED < 0,8×required (bepaalt hoe pragmatisch de JIT mag zijn)."""
+    if mbit >= required:
+        return "FAST"
+    if mbit >= required * cfg.degraded_ratio:
+        return "MARGINAL"
+    return "SEVERELY_DEGRADED"
+
+
 @dataclass
 class JitDecision:
     band: str                       # FAST | MARGINAL | DEGRADED
     measured_mbit: float
     ttfb_s: float
     required_mbit: float
+    severity: str = ""              # FAST | MARGINAL | SEVERELY_DEGRADED
     switched: bool = False
     switched_to: dict | None = None
     searched: bool = False
@@ -205,7 +216,8 @@ class JitController:
                                  hash=src_info_hash(source), required_mbit=round(required_mbit, 1))
         probe = await self._probe(source)
         band = delivery_band(probe["mbit"], probe["ttfb_s"], required_mbit, cfg)
-        decision = JitDecision(band, probe["mbit"], probe["ttfb_s"], required_mbit)
+        decision = JitDecision(band, probe["mbit"], probe["ttfb_s"], required_mbit,
+                               severity=current_severity(probe["mbit"], required_mbit, cfg))
         if band == FAST:
             self.metrics["jit_fast_pass"] += 1
             await self.resolver._evt("jit_preflight_pass", item=item,
@@ -299,6 +311,14 @@ class JitController:
                                              hash=cand.info_hash, name=cand.torrent_name,
                                              mbit=probe["mbit"], ttfb_s=probe.get("ttfb_s"),
                                              relation=relation)
+                    # POLICY-PASS early-exit: bij SEVERELY_DEGRADED current is
+                    # de eerste geverifieerde same/minor-class candidate die
+                    # ≥ required én duidelijk beter is direct de winnaar
+                    if (decision.severity == "SEVERELY_DEGRADED"
+                            and self._candidate_sufficient(probe["mbit"],
+                                                           decision.measured_mbit,
+                                                           required_mbit)):
+                        break
             decision.rejected_quality = rejected_quality
 
             if not probed:
@@ -308,11 +328,13 @@ class JitController:
                 decision.note = "no equally-good faster source found"
                 return False
 
+            # POLICY-PASS: `required = bitrate × playback_margin` is DE
+            # playback-drempel en bevat al de headroom — daar komt géén
+            # tweede candidate-marge (geen required × fast_ratio) bovenop.
             probed.sort(key=lambda t: t[0], reverse=True)
             best_mbit, best_cand, best_probe = probed[0]
-            # FASE 11: switch-drempel — duidelijk sneller én headroom
-            if not (best_mbit >= required_mbit * self.cfg.fast_ratio
-                    and best_mbit >= decision.measured_mbit * self.cfg.min_gain):
+            if not self._candidate_sufficient(best_mbit, decision.measured_mbit,
+                                              required_mbit):
                 self.metrics["jit_no_equivalent_source"] += 1
                 await self.resolver._evt("jit_no_equivalent_source", item=item,
                                          best_mbit=best_mbit,
@@ -360,6 +382,14 @@ class JitController:
         await self.resolver._evt("jit_completed", item=item,
                                  hash=src_info_hash(src), mbit=cand_mbit)
         return True
+
+    def _candidate_sufficient(self, cand_mbit: float, current_mbit: float,
+                              required: float) -> bool:
+        """POLICY-PASS basisregel: candidate ≥ required (dé playback-drempel)
+        én duidelijke verbetering t.o.v. current (× min_gain, hysteresis).
+        Geen tweede veiligheidsmarge boven required."""
+        return (cand_mbit >= required
+                and cand_mbit / max(current_mbit, 0.1) >= self.cfg.min_gain)
 
     async def _probe_by_hash(self, item, cand) -> dict | None:
         """FASE 9-probe op een kandidaat zonder hem te activeren."""
