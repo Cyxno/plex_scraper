@@ -203,6 +203,7 @@ def create_web_app(settings: Settings) -> FastAPI:
                 "playback_pause": sh.get("playback_pause", False),
                 "active_playback": sh.get("active_playback", 0),
                 "degraded_throughput": len(sh.get("degraded_throughput") or []),
+                "health_states": sh.get("health_states") or {},
                 "counts_24h": sh.get("counts_24h", {}),
                 "events": [
                     {"ts": e.get("ts"), "event": e.get("event"),
