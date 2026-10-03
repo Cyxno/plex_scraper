@@ -95,6 +95,18 @@ class Settings:
     adaptive_fallback_errors: int = 2
     candidate_min_improvement: float = 1.5
     candidate_headroom: float = 1.2
+    # JIT playback preflight (FASE 3-15)
+    jit_enabled: bool = True
+    jit_preflight_min_mbit: float = 40.0
+    jit_fast_ratio: float = 1.2
+    jit_degraded_ratio: float = 0.8
+    jit_ttfb_max_s: float = 5.0
+    jit_max_wait_s: float = 12.0
+    jit_probe_candidates: int = 3
+    jit_min_gain: float = 1.5
+    jit_allow_minor_deviation: bool = True
+    jit_allow_quality_downgrade: bool = False
+    jit_delivery_bad_ttl_s: float = 3600.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -168,6 +180,22 @@ class Settings:
                 os.environ.get("CANDIDATE_MIN_IMPROVEMENT", cls.candidate_min_improvement)),
             candidate_headroom=float(
                 os.environ.get("CANDIDATE_HEADROOM", cls.candidate_headroom)),
+            jit_enabled=_bool("JIT_ENABLED", cls.jit_enabled),
+            jit_preflight_min_mbit=float(
+                os.environ.get("JIT_PREFLIGHT_MIN_MBIT", cls.jit_preflight_min_mbit)),
+            jit_fast_ratio=float(os.environ.get("JIT_FAST_RATIO", cls.jit_fast_ratio)),
+            jit_degraded_ratio=float(
+                os.environ.get("JIT_DEGRADED_RATIO", cls.jit_degraded_ratio)),
+            jit_ttfb_max_s=float(os.environ.get("JIT_TTFB_MAX_S", cls.jit_ttfb_max_s)),
+            jit_max_wait_s=float(os.environ.get("JIT_MAX_WAIT_S", cls.jit_max_wait_s)),
+            jit_probe_candidates=_int("JIT_PROBE_CANDIDATES", cls.jit_probe_candidates),
+            jit_min_gain=float(os.environ.get("JIT_MIN_GAIN", cls.jit_min_gain)),
+            jit_allow_minor_deviation=_bool(
+                "JIT_ALLOW_MINOR_DEVIATION", cls.jit_allow_minor_deviation),
+            jit_allow_quality_downgrade=_bool(
+                "JIT_ALLOW_QUALITY_DOWNGRADE", cls.jit_allow_quality_downgrade),
+            jit_delivery_bad_ttl_s=float(
+                os.environ.get("JIT_DELIVERY_BAD_TTL_S", cls.jit_delivery_bad_ttl_s)),
             torrent_ready_max_polls=_int("TORBOX_MAX_POLLS", cls.torrent_ready_max_polls),
             max_provider_adds_per_resolve=_int(
                 "MAX_PROVIDER_ADDS_PER_RESOLVE", cls.max_provider_adds_per_resolve),

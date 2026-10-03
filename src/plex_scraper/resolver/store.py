@@ -85,6 +85,7 @@ def _row_to_source(row: sqlite3.Row) -> m.Source:
         cached=bool(row["cached"]), score=row["score"],
         score_json=json.loads(row["score_json"] or "{}"),
         state=row["state"], failure_count=row["failure_count"], bad_until=row["bad_until"],
+        delivery_bad_until=row["delivery_bad_until"] if "delivery_bad_until" in row.keys() else 0.0,
         last_verified=row["last_verified"], created_at=row["created_at"],
     )
 
@@ -99,7 +100,8 @@ class Store:
             self._conn.executescript(_SCHEMA)
             # migrate: media-bitrate kolommen (adaptive-throughput fase)
             for col, ddl in (("duration_s", "ALTER TABLE media_items ADD COLUMN duration_s REAL"),
-                             ("media_bitrate_mbit", "ALTER TABLE media_items ADD COLUMN media_bitrate_mbit REAL")):
+                             ("media_bitrate_mbit", "ALTER TABLE media_items ADD COLUMN media_bitrate_mbit REAL"),
+                             ("delivery_bad_until", "ALTER TABLE sources ADD COLUMN delivery_bad_until REAL NOT NULL DEFAULT 0")):
                 try:
                     self._conn.execute(ddl)
                 except sqlite3.OperationalError:
@@ -210,9 +212,15 @@ class Store:
         def fn(c: sqlite3.Connection):
             c.execute(
                 "UPDATE sources SET state=?, failure_count=?, bad_until=?, last_verified=?, "
-                "generation=?, cached=?, file_id=?, file_name=?, size=? WHERE id=?",
+                "generation=?, cached=?, file_id=?, file_name=?, size=?, delivery_bad_until=? WHERE id=?",
                 (src.state, src.failure_count, src.bad_until, src.last_verified, src.generation,
-                 int(src.cached), src.file_id, src.file_name, src.size, src.id))
+                 int(src.cached), src.file_id, src.file_name, src.size, src.delivery_bad_until, src.id))
+        await self.run(fn)
+
+    async def set_delivery_bad(self, source_id: str, until: float) -> None:
+        """FASE 13: bron tijdelijk als delivery-degraded markeren (NIET permanent bad)."""
+        def fn(c: sqlite3.Connection):
+            c.execute("UPDATE sources SET delivery_bad_until=? WHERE id=?", (until, source_id))
         await self.run(fn)
 
     async def get_source(self, source_id: str) -> m.Source | None:

@@ -102,11 +102,17 @@ class Source:
     state: str = SourceState.CANDIDATE.value
     failure_count: int = 0
     bad_until: float = 0.0                # temporary bad-until (TTL backoff)
+    delivery_bad_until: float = 0.0       # JIT: tijdelijk te traag voor deze media (FASE 13)
     last_verified: float = 0.0
     created_at: float = field(default_factory=now)
 
     def is_bad(self, at: float | None = None) -> bool:
         return self.bad_until > (at or now())
+
+    def is_delivery_bad(self, at: float | None = None) -> bool:
+        """JIT: bron is inhoudelijk geldig maar leverde net te traag voor
+        dit media-item — tijdelijk uitgesloten voor failover-selectie."""
+        return self.delivery_bad_until > (at or now())
 
 
 @dataclass

@@ -24,6 +24,7 @@ def source_out(src: m.Source | None) -> dict | None:
         "id": src.id, "generation": src.generation, "provider": src.provider,
         "info_hash": src.info_hash, "torrent_name": src.torrent_name,
         "file_id": src.file_id, "file_name": src.file_name, "size": src.size,
+        "delivery_bad_until": getattr(src, "delivery_bad_until", 0.0),
         "resolution": src.resolution, "codec": src.codec, "hdr": src.hdr,
         "audio": src.audio, "language": src.language, "release_type": src.release_type,
         "seeders": src.seeders, "cached": src.cached, "score": src.score,

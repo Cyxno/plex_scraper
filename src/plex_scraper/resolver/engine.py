@@ -21,6 +21,7 @@ from plex_scraper.common.scoring.release_parser import parse_release
 from plex_scraper.scraper.scrapers.base import Scraper, TorrentCandidate
 from plex_scraper.resolver.selfheal import identity_gate
 from plex_scraper.resolver import media as m_prof
+from plex_scraper.resolver.jit import JitConfig, JitController
 from plex_scraper.resolver.stream import AdaptiveRangeReader
 from .caches import CacheSet
 from .store import Store
@@ -35,6 +36,7 @@ class SessionContext:
     last_read_at: float = 0.0     # wall-clock; 0 = nog niet gelezen
     required_mbit: float = 0.0    # media-aware vereiste (FASE 2)
     bitrate_confidence: str = "floor"
+    jit_decision: object = None   # JitDecision (FASE 3)
 
 
 class UnresolvedError(Exception):
@@ -62,6 +64,20 @@ class Resolver:
             "prefetch_hits": 0, "prefetch_errors": 0,
             "adaptive_fallbacks": 0, "two_way_sessions": 0,
         }
+        # FASE 3/9/12: JIT playback preflight + quality-preserving failover
+        self.jit = JitController(self, JitConfig(
+            enabled=getattr(settings, "jit_enabled", True),
+            preflight_min_mbit=getattr(settings, "jit_preflight_min_mbit", 40.0),
+            fast_ratio=getattr(settings, "jit_fast_ratio", 1.2),
+            degraded_ratio=getattr(settings, "jit_degraded_ratio", 0.8),
+            ttfb_max_s=getattr(settings, "jit_ttfb_max_s", 5.0),
+            max_wait_s=getattr(settings, "jit_max_wait_s", 12.0),
+            probe_candidates=getattr(settings, "jit_probe_candidates", 3),
+            min_gain=getattr(settings, "jit_min_gain", 1.5),
+            allow_minor_deviation=getattr(settings, "jit_allow_minor_deviation", True),
+            allow_quality_downgrade=getattr(settings, "jit_allow_quality_downgrade", False),
+            delivery_bad_ttl_s=getattr(settings, "jit_delivery_bad_ttl_s", 3600.0),
+        ))
 
     # ------------------------------------------------------------ lifecycle
     async def _evt(self, event_kind: str, item: m.MediaItem | None = None,
@@ -162,8 +178,11 @@ class Resolver:
 
         # candidates marked temporary-bad are skipped BEFORE the provider-add
         # budget is considered, so dead releases never block fresh ones
-        bad_hashes = {s.info_hash for s in await self.store.list_sources(item.id)
-                      if s.is_bad()}
+        sources = await self.store.list_sources(item.id)
+        bad_hashes = {s.info_hash for s in sources if s.is_bad()}
+        # FASE 13: JIT delivery-bad bronnen tijdelijk uitgesloten (inhoudelijk
+        # geldig, alleen op dit moment te traag) — TTL laat ze terugkomen
+        delivery_bad = {s.info_hash for s in sources if s.is_delivery_bad()}
 
         fallback_count = 0
         provider_adds = 0
@@ -184,9 +203,9 @@ class Resolver:
                                     hash=cand.info_hash, name=cand.torrent_name,
                                     reason=why)
                     continue
-                if cand.info_hash in bad_hashes:
+                if cand.info_hash in bad_hashes or cand.info_hash in delivery_bad:
                     continue
-            elif cand.info_hash in bad_hashes:
+            elif cand.info_hash in bad_hashes or cand.info_hash in delivery_bad:
                 # grandfathered probeert ondanks bad-marking opnieuw: de
                 # validatie-probe beslist (transiënte 400's zijn geen bewijs)
                 await self._evt("candidate_grandfathered_retry", item=item,
@@ -485,9 +504,16 @@ class Resolver:
                 item, reason="open_needs_source")
         if source is None:
             raise UnresolvedError(f"no working source for {item.plex_path}")
-
         profile = self.media_profile(item, source.size)
         required = profile.required_mbit(self.s.sweeper_throughput_margin)
+        # FASE 1/3: JIT playback preflight — alleen op het echte play-signaal
+        # (open_handle zónder two_way=0); background-checks (two_way=0) slaan
+        # dit over. Bounded: FAST/MARGINAL direct, DEGRADED ≤ jit_max_wait_s.
+        jit_decision = None
+        jit_note = ""
+        if two_way != 0 and required > 0:
+            jit_decision = await self.jit.preflight_async(item, source, required)
+            jit_note = jit_decision.note
         if two_way is None:
             two_way = self.two_way_for(item, required)
         reader = AdaptiveRangeReader(self, source.id, source.size,
@@ -503,6 +529,7 @@ class Resolver:
         ctx = SessionContext(session=session, source=source, reader=reader)
         ctx.required_mbit = round(required, 1)
         ctx.bitrate_confidence = profile.confidence
+        ctx.jit_decision = jit_decision
         self.sessions[session.handle] = ctx
         await self._evt("session_opened", item_id=item_id, handle=session.handle,
               generation=source.generation, size=source.size,

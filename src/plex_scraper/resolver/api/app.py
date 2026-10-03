@@ -109,6 +109,23 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         return result
 
     # --------------------------------------------------- self-healing API
+    @app.get("/api/jit/status")
+    async def jit_status():
+        """FASE 26/28: JIT-state + metrics voor GUI/dashboard."""
+        jit = resolver.jit
+        return {"enabled": jit.cfg.enabled,
+                "preflight_min_mbit": jit.cfg.preflight_min_mbit,
+                "bands": {"fast_ratio": jit.cfg.fast_ratio,
+                          "degraded_ratio": jit.cfg.degraded_ratio},
+                "allow_minor_deviation": jit.cfg.allow_minor_deviation,
+                "allow_quality_downgrade": jit.cfg.allow_quality_downgrade,
+                "metrics": dict(sorted(jit.metrics.items())),
+                "cached_decisions": {k: {"band": v[1].band,
+                                         "mbit": v[1].measured_mbit,
+                                         "expires_in_s": round(v[0] - time.time())}
+                                     for k, v in jit._cache.items()},
+                "inflight": sorted(jit._inflight)}
+
     @app.get("/api/playback/active")
     async def playback_active():
         """Sessies met recente reads = actieve playback (voor sweeper-pauze)."""
@@ -324,10 +341,15 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         # two_way=0: health-checks/achtergrond willen géén prefetch
         ctx = await resolver.open_handle(
             item_id, two_way=None if two_way is None else bool(two_way))
+        jd = getattr(ctx, "jit_decision", None)
         return {"handle": ctx.session.handle, "size": ctx.session.size,
                 "generation": ctx.session.generation,
                 "read_mode": "2way" if getattr(ctx.reader, "two_way", False) else "single",
                 "required_mbit": getattr(ctx, "required_mbit", 0.0),
+                "jit": None if jd is None else {
+                    "band": jd.band, "measured_mbit": jd.measured_mbit,
+                    "ttfb_s": jd.ttfb_s, "switched": jd.switched,
+                    "switched_to": jd.switched_to, "note": jd.note},
                 "source": source_out(ctx.source)}
 
     @app.get("/stream/{handle}")

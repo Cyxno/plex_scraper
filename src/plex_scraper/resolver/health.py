@@ -207,41 +207,19 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                                 await asyncio.sleep(2.0)
                     raise last
 
-                # FASE 5: representatieve meting — 3 offsets (begin/midden/
-                # later deel) × 1 MB, elk met TTFB; de eerste read dient
-                # tevens als mkv/MP4-magic-check. Bounded: totaal 3 MB.
-                offsets = self._sample_offsets(item, handle_size)
-                samples = []
-                d1 = b""
-                for i, off in enumerate(offsets):
-                    t0 = time.monotonic()
-                    data = await _read(
-                        f"{RESOLVER_BASE}/stream/{handle}?offset={off}&length=1048576")
-                    dt = max(time.monotonic() - t0, 1e-6)
-                    mbit = len(data) * 8 / 1e6 / dt
-                    samples.append({"offset": off, "ttfb_s": round(dt, 2),
-                                    "mbit": round(mbit, 1)})
-                    if i == 0:
-                        d1 = data
+                # FASE 17: GEEN library-wide delivery-scan meer — de sweeper
+                # checkt alleen beschikbaarheid (leesbaar + seek + magic).
+                # Throughput-health is JIT / active-playback scoped.
+                d1 = await _read(
+                    f"{RESOLVER_BASE}/stream/{handle}?offset=0&length=64")
                 d2 = await _read(
                     f"{RESOLVER_BASE}/stream/{handle}?offset=65536&length=65536")
                 await client.delete(f"{RESOLVER_BASE}/open/{handle}")
-            result["healthy"] = (len(d1) >= 64 and len(d2) == 65536
+            result["healthy"] = (len(d1) == 64 and len(d2) == 65536
                                  and (d1[:4] == bytes.fromhex("1a45dfa3")
                                       or d1[4:8] == b"ftyp"))
-            worst = min(samples, key=lambda s: s["mbit"])
-            result["ttfb_s"] = max(s["ttfb_s"] for s in samples)
-            result["mbit"] = worst["mbit"]              # FASE 5: min-chunk telt
-            result["samples"] = samples
-            # FASE 2: per-media requirement (bitrate × marge), niet globaal
-            profile = self.resolver.media_profile(item, handle_size)
-            required = profile.required_mbit(self.throughput_margin)
-            result["required_mbit"] = round(required, 1)
-            result["bitrate_confidence"] = profile.confidence
-            self._throughput_observe(item.plex_path, result)
         except Exception as e:
             result["error"] = repr(e)[:80]
-            # leesfaal → BROKEN-traject (bestaande strikes/repair-flow)
             self._mark_broken(item.plex_path)
         if not result["healthy"]:
             result["repair_needed"] = True
