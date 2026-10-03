@@ -445,6 +445,19 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
         for item in batch:
             plex_path = item.plex_path
             try:
+                # DOEL 6: playback die midden in een batch begint, breekt de
+                # lopende batch direct af (1 lokale HTTP-call per item)
+                if self.playback_pause:
+                    live = await self.playback_active_count()
+                    if live > 0:
+                        if time.time() >= self._pause_logged_until:
+                            self._log_json("sweeper", "sweep_paused_playback",
+                                           {"active_streams": live,
+                                            "mid_batch": True})
+                            self._pause_logged_until = time.time() + 1800.0
+                        log.info("sweep afgebroken: %d actieve playback-streams", live)
+                        return
+
                 if item.status == "NO_SOURCE":
                     # backoff in beide modi: elke poging is een volledige
                     # scraper-zoekopdracht, dus die begrenzen we
