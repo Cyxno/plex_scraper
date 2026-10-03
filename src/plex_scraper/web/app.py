@@ -191,6 +191,11 @@ def create_web_app(settings: Settings) -> FastAPI:
                 recovered.append(d)
             else:
                 current_failures.append(d)
+        playback = None
+        try:
+            playback = resolver("/api/playback/active", 10)
+        except Exception:
+            playback = None
         selfheal = None
         try:
             sh = resolver("/api/selfheal/status", 15)
@@ -221,6 +226,7 @@ def create_web_app(settings: Settings) -> FastAPI:
             "failures": current_failures[:25],
             "recovered": recovered[:25],
             "selfheal": selfheal,
+            "playback": playback,
             "mounts": _mounts(),
             "last_ok_resolve": (last_ok or None) and {
                 "ts": last_ok.get("ts"), "item_id": last_ok.get("item_id"),

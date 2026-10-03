@@ -123,8 +123,11 @@ class JitConfig:
     min_gain: float = 1.5
     allow_minor_deviation: bool = True
     allow_quality_downgrade: bool = False   # FASE 8: geen stille downgrade
-    fast_cache_s: float = 900.0
+    fast_cache_s: float = 180.0          # FASE 3: kort — FAST is optimalisatie, geen garantie
     degraded_cache_s: float = 600.0
+    probe_parallel: int = 2              # FASE 16: bounded parallel top-2
+    confirm_cached_fast: bool = True
+    hot_spare: bool = True               # FASE 18: playback-scoped link-prewarm
     delivery_bad_ttl_s: float = 3600.0      # FASE 13
 
 
@@ -137,6 +140,7 @@ class JitController:
         self.cfg = cfg
         self._cache: dict[str, tuple[float, JitDecision]] = {}   # plex_path → (vervaltijd, decision)
         self._inflight: set[str] = set()
+        self._hot_spares: dict[str, str] = {}                    # item_id → hash (FASE 18)
         self.metrics = defaultdict(int)
 
     # ------------------------------------------------------------- helpers
@@ -219,7 +223,20 @@ class JitController:
             return JitDecision(FAST, 0, 0, required_mbit, note="low-bitrate fast path")
         cached = self._cached(item.plex_path)
         if cached is not None:
-            return cached
+            if cached.band != FAST or not cfg.confirm_cached_fast:
+                # DEGRADED-cache (kort) of confirmatie uit: cache volstaat
+                return cached
+            # FASE 3: FAST is een optimalisatie, geen garantie — een oude
+            # FAST-cache bij volatiele routes vraagt om lichte live-
+            # confirmatie (1 sample); zakt de bron door → verse beoordeling
+            probe = await self._probe(source, sample_bytes=cfg.sample_bytes)
+            if delivery_band(probe["mbit"], probe["ttfb_s"], required_mbit,
+                             cfg) == FAST:
+                self.metrics["jit_fast_cache_confirmed"] += 1
+                self._store_cache(item.plex_path, cached)
+                return cached
+            self.metrics["fast_cache_false_positive"] += 1
+            del self._cache[item.plex_path]
         decision = await self._preflight(item, source, required_mbit)
         self._store_cache(item.plex_path, decision)
         return decision
@@ -286,8 +303,12 @@ class JitController:
             sources = {s.info_hash: s for s in
                        await self.resolver.store.list_sources(item.id)}
             probed: list[tuple[float, object, dict]] = []
+            selected: list[tuple[str, object]] = []
             rejected_quality = 0
             tried = 0
+            spare_hash = self._hot_spares.get(item.id)
+            if spare_hash:
+                ranked.sort(key=lambda t: 0 if src_info_hash(t[0]) == spare_hash else 1)
             for cand, _score in ranked:
                 if tried >= self.cfg.probe_candidates:
                     break
@@ -318,23 +339,46 @@ class JitController:
                                                  relation=relation)
                     continue
                 tried += 1
-                self.metrics["jit_candidate_probe"] += 1
-                probe = await self._probe_by_hash(item, cand)
-                if probe and probe.get("mbit", 0) > 0:
-                    probed.append((probe["mbit"], cand, probe))
-                    await self.resolver._evt("jit_candidate_probe", item=item,
-                                             hash=cand.info_hash, name=cand.torrent_name,
-                                             mbit=probe["mbit"], ttfb_s=probe.get("ttfb_s"),
-                                             relation=relation)
-                    # POLICY-PASS early-exit: bij SEVERELY_DEGRADED current is
-                    # de eerste geverifieerde same/minor-class candidate die
-                    # ≥ required én duidelijk beter is direct de winnaar
-                    if (decision.severity == "SEVERELY_DEGRADED"
-                            and self._candidate_sufficient(probe["mbit"],
+                selected.append((relation, cand))
+                if tried >= self.cfg.probe_candidates:
+                    break
+            decision.rejected_quality = rejected_quality
+
+            # FASE 16: bounded parallel probes (top-2 tegelijk) — halveert
+            # time-to-good-candidate; concurrency blijft klein en gated door
+            # de globale upstream-semaphore
+            if (selected and self.cfg.probe_parallel > 1 and len(selected) > 1
+                    and decision.severity != "SEVERELY_DEGRADED"):
+                results = list(await asyncio.gather(
+                    *[self._probe_by_hash(item, c) for _, c in selected]))
+            else:
+                # sequentieel met early-exit: bij SEVERELY_DEGRADED geen
+                # probes verspillen nadat een kandidaat al slaagt
+                results = []
+                for _rel, _c in selected:
+                    _r = await self._probe_by_hash(item, _c)
+                    results.append(_r)
+                    if (_r and _r.get("mbit", 0) > 0
+                            and self._candidate_sufficient(_r["mbit"],
                                                            decision.measured_mbit,
                                                            required_mbit)):
                         break
-            decision.rejected_quality = rejected_quality
+            for (relation, cand), probe in zip(selected, results):
+                if not (probe and probe.get("mbit", 0) > 0):
+                    continue
+                probed.append((probe["mbit"], cand, probe))
+                await self.resolver._evt("jit_candidate_probe", item=item,
+                                         hash=cand.info_hash, name=cand.torrent_name,
+                                         mbit=probe["mbit"], ttfb_s=probe.get("ttfb_s"),
+                                         relation=relation)
+                # POLICY-PASS early-exit: bij SEVERELY_DEGRADED current is de
+                # eerste geverifieerde same/minor-class candidate die
+                # ≥ required én duidelijk beter is direct de winnaar
+                if (decision.severity == "SEVERELY_DEGRADED"
+                        and self._candidate_sufficient(probe["mbit"],
+                                                       decision.measured_mbit,
+                                                       required_mbit)):
+                    break
 
             if not probed:
                 self.metrics["jit_no_equivalent_source"] += 1
@@ -405,6 +449,42 @@ class JitController:
         Geen tweede veiligheidsmarge boven required."""
         return (cand_mbit >= required
                 and cand_mbit / max(current_mbit, 0.1) >= self.cfg.min_gain)
+
+    async def warm_spare(self, item, current) -> None:
+        """FASE 18: playback-scoped hot spare — bij zware playback in de
+        achtergrond 1 same-class cached candidate linken (geen throughput-
+        benchmark als current gezond is). Failover wordt dan sneller
+        probe-ready. Geen library-scanning."""
+        try:
+            cur_tier = quality_tier(current.torrent_name)["tier"]
+            candidates = await self.resolver._gather_candidates(item)
+            ranked = await self.resolver._rank_candidates(item, candidates)
+            sources = {s.info_hash: s for s in
+                       await self.resolver.store.list_sources(item.id)}
+            for cand, _s in ranked:
+                h = src_info_hash(cand)
+                if h == src_info_hash(current):
+                    continue
+                if h in sources and sources[h].is_delivery_bad():
+                    continue
+                if sources.get(h) is None and h not in _cached_hashes(self.resolver):
+                    continue
+                if quality_relation(cur_tier, quality_tier(cand.torrent_name)["tier"])                         not in ("same", "higher", "minor"):
+                    continue
+                ok, _ = identity_gate(item.title, item.series, item.season,
+                                      item.episode, cand.torrent_name, item.year)
+                if not ok:
+                    continue
+                torrent = await self.resolver.provider.ensure_torrent(h, cand.torrent_name)
+                await self.resolver.provider.get_stream_url(torrent.torrent_id,
+                                                            cand.file_index or 0)
+                self._hot_spares[item.id] = h
+                await self.resolver._evt("hot_spare_ready", item=item, hash=h,
+                                         name=cand.torrent_name[:80])
+                return
+        except Exception as exc:                            # noqa: BLE001
+            await self.resolver._evt("hot_spare_failed", item=item,
+                                     error=repr(exc)[:100])
 
     async def _probe_by_hash(self, item, cand) -> dict | None:
         """FASE 9-probe op een kandidaat zonder hem te activeren."""

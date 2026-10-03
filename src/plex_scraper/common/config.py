@@ -107,6 +107,13 @@ class Settings:
     jit_allow_minor_deviation: bool = True
     jit_allow_quality_downgrade: bool = False
     jit_delivery_bad_ttl_s: float = 3600.0
+    jit_stall_s: float = 6.0
+    jit_max_failovers_per_session: int = 2
+    jit_reconnect_on_failover: bool = True
+    jit_probe_parallel: int = 2
+    jit_confirm_cached_fast: bool = True
+    tautulli_url: str = ""
+    tautulli_apikey: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -196,6 +203,16 @@ class Settings:
                 "JIT_ALLOW_QUALITY_DOWNGRADE", cls.jit_allow_quality_downgrade),
             jit_delivery_bad_ttl_s=float(
                 os.environ.get("JIT_DELIVERY_BAD_TTL_S", cls.jit_delivery_bad_ttl_s)),
+            jit_stall_s=float(os.environ.get("JIT_STALL_S", cls.jit_stall_s)),
+            jit_max_failovers_per_session=_int(
+                "JIT_MAX_FAILOVERS_PER_SESSION", cls.jit_max_failovers_per_session),
+            jit_reconnect_on_failover=_bool(
+                "JIT_RECONNECT_ON_FAILOVER", cls.jit_reconnect_on_failover),
+            jit_probe_parallel=_int("JIT_PROBE_PARALLEL", cls.jit_probe_parallel),
+            jit_confirm_cached_fast=_bool(
+                "JIT_CONFIRM_CACHED_FAST", cls.jit_confirm_cached_fast),
+            tautulli_url=os.environ.get("TAUTULLI_URL", cls.tautulli_url),
+            tautulli_apikey=os.environ.get("TAUTULLI_APIKEY", cls.tautulli_apikey),
             torrent_ready_max_polls=_int("TORBOX_MAX_POLLS", cls.torrent_ready_max_polls),
             max_provider_adds_per_resolve=_int(
                 "MAX_PROVIDER_ADDS_PER_RESOLVE", cls.max_provider_adds_per_resolve),

@@ -140,7 +140,9 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
                             "size": ctx.session.size,
                             "idle_s": round(time.time() - last, 1),
                             "read_mode": "2way" if getattr(ctx.reader, "two_way", False) else "single",
-                            "required_mbit": getattr(ctx, "required_mbit", 0.0)})
+                            "required_mbit": getattr(ctx, "required_mbit", 0.0),
+                            "delivery": (ctx.monitor.snapshot() if ctx.monitor else None),
+                            "hot_spare": resolver.jit._hot_spares.get(ctx.session.media_item_id)})
         return {"active": len(out), "streams": out,
                 "threshold_s": 90}
 

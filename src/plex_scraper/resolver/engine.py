@@ -10,6 +10,8 @@ the first candidate whose bytes validate.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+from collections import defaultdict
 import time
 from dataclasses import dataclass, field
 
@@ -22,6 +24,7 @@ from plex_scraper.scraper.scrapers.base import Scraper, TorrentCandidate
 from plex_scraper.resolver.selfheal import identity_gate
 from plex_scraper.resolver import media as m_prof
 from plex_scraper.resolver.jit import JitConfig, JitController
+from plex_scraper.resolver.runtime import DeliveryMonitor, DEGRADED as RT_DEGRADED
 from plex_scraper.resolver.stream import AdaptiveRangeReader
 from .caches import CacheSet
 from .store import Store
@@ -37,6 +40,7 @@ class SessionContext:
     required_mbit: float = 0.0    # media-aware vereiste (FASE 2)
     bitrate_confidence: str = "floor"
     jit_decision: object = None   # JitDecision (FASE 3)
+    monitor: object = None        # DeliveryMonitor (runtime delivery)
 
 
 class UnresolvedError(Exception):
@@ -77,7 +81,12 @@ class Resolver:
             allow_minor_deviation=getattr(settings, "jit_allow_minor_deviation", True),
             allow_quality_downgrade=getattr(settings, "jit_allow_quality_downgrade", False),
             delivery_bad_ttl_s=getattr(settings, "jit_delivery_bad_ttl_s", 3600.0),
+            probe_parallel=getattr(settings, "jit_probe_parallel", 2),
+            confirm_cached_fast=getattr(settings, "jit_confirm_cached_fast", True),
         ))
+        # FASE 10/19: runtime-failover administratie (switch-budget per item)
+        self._failover_budget: dict[str, tuple[int, float]] = {}
+        self.runtime_metrics = defaultdict(int)
 
     # ------------------------------------------------------------ lifecycle
     async def _evt(self, event_kind: str, item: m.MediaItem | None = None,
@@ -530,6 +539,16 @@ class Resolver:
         ctx.required_mbit = round(required, 1)
         ctx.bitrate_confidence = profile.confidence
         ctx.jit_decision = jit_decision
+        # FASE 5: runtime delivery-monitor op echte playback (niet background)
+        if two_way != 0:
+            ctx.monitor = DeliveryMonitor(
+                item.plex_path,
+                media_bitrate=profile.bitrate_mbit,
+                target_mbit=required,
+                degraded_ratio=self.s.jit_degraded_ratio,
+                stall_s=self.s.jit_stall_s)
+            self.metrics.setdefault("active_delivery_monitors", 0)
+            self.metrics["active_delivery_monitors"] += 1
         self.sessions[session.handle] = ctx
         await self._evt("session_opened", item_id=item_id, handle=session.handle,
               generation=source.generation, size=source.size,
@@ -553,7 +572,79 @@ class Resolver:
         self.metrics["request_count"] += 1
         self.metrics["request_latency_sum"] += time.monotonic() - t0
         ctx.session.read_count += 1
+        # FASE 5/9: runtime delivery-monitor — gebruikt de bytes die toch al
+        # voor Plex worden gelezen; geen extra provider-load
+        if ctx.monitor is not None and data:
+            ctx.monitor.feed(len(data), time.monotonic() - t0)
+            snap = ctx.monitor.evaluate()
+            if snap["state"] != ctx.monitor.last_state_reported:
+                ctx.monitor.last_state_reported = snap["state"]
+                await self._evt("runtime_delivery_" + snap["state"].lower(),
+                                item_id=ctx.session.media_item_id,
+                                handle=handle, mbit=snap.get("rolling_mbit"),
+                                min_realtime=snap.get("min_realtime"),
+                                target=snap.get("target"))
+                self.runtime_metrics["runtime_delivery_" + snap["state"].lower()] += 1
+            if (snap["state"] == RT_DEGRADED
+                    and not ctx.monitor.failed_over
+                    and self._failover_budget_ok(ctx.session.media_item_id)):
+                ctx.monitor.failed_over = True
+                self.runtime_metrics["runtime_failover_searches"] += 1
+                t_detect = snap["elapsed_s"]
+                self.runtime_metrics["time_to_detect_degraded_max"] = max(
+                    self.runtime_metrics.get("time_to_detect_degraded_max", 0.0),
+                    t_detect)
+                asyncio.create_task(self._runtime_failover(ctx, snap))
         return data
+
+    def _failover_budget_ok(self, item_id: str) -> bool:
+        """FASE 19: max N runtime-failovers per item per budgetvenster."""
+        count, window_start = self._failover_budget.get(item_id, (0, 0.0))
+        now = time.time()
+        if now - window_start > 1800:
+            count, window_start = 0, now
+        if count >= getattr(self.s, "jit_max_failovers_per_session", 2):
+            return False
+        self._failover_budget[item_id] = (count + 1, window_start)
+        return True
+
+    async def _runtime_failover(self, ctx: SessionContext, snap: dict) -> None:
+        """FASE 10/14: runtime DEGRADED → same-class search + switch;
+        daarna gecontroleerde reconnect van de item-sessies (het FUSE
+        handle is source-bound — bewezen; mid-byte rebind tussen
+        verschillende releases is onveilig en wordt niet gedaan)."""
+        item = await self.store.get_item(ctx.session.media_item_id)
+        if item is None:
+            return
+        source = await self._active_source(item.id)
+        if source is None:
+            return
+        decision = SimpleNamespace(
+            measured_mbit=snap.get("rolling_mbit", 0.0), band="DEGRADED",
+            severity="SEVERELY_DEGRADED", rejected_quality=0,
+            switched=False, switched_to=None, note="")
+        try:
+            ok = await self.jit._search_and_switch(
+                item, source, ctx.required_mbit or 0.0, decision,
+                background=False)
+        except Exception as exc:                        # noqa: BLE001
+            self.runtime_metrics["runtime_failover_failed"] += 1
+            await self._evt("runtime_failover_failed", item=item,
+                            error=repr(exc)[:120])
+            return
+        if ok:
+            self.runtime_metrics["runtime_failover_success"] += 1
+            await self._evt("runtime_reconnect_requested", item=item,
+                            reason="delivery degraded, new source active")
+            # gecontroleerde reconnect: sessies van dit item sluiten →
+            # FUSE read → EIO → Plex heropent (zelfde ratingKey/timeline)
+            if getattr(self.s, "jit_reconnect_on_failover", True):
+                for hdl, other in list(self.sessions.items()):
+                    if other.session.media_item_id == item.id:
+                        try:
+                            await self.release(hdl)
+                        except Exception:           # noqa: BLE001
+                            pass
 
     async def release(self, handle: str) -> None:
         ctx = self.sessions.pop(handle, None)

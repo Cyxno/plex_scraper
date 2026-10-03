@@ -35,6 +35,7 @@ ul{padding:0;margin:0}
 <div id="alert"></div>
 <div id="rh" class="panel"><h3>current library health</h3>loading...</div>
 <div id="sh" class="panel"><h3>self-healing</h3>loading...</div>
+<div id="pbx" class="panel"><h3>actieve playback</h3><span class="muted">—</span></div>
 <div id="mh" class="panel"><h3>migration history</h3>loading...</div>
 <div class="panel"><h3>mounts</h3><div id="m"></div></div>
 <div class="panel"><h3>worker verify</h3><div id="wv"></div></div>
@@ -78,6 +79,19 @@ evs.forEach(e=>{shH+='<tr><td class="muted">'+new Date(e.ts*1000).toLocaleTimeSt
 shH+='</table>';}
 }
 document.getElementById('sh').innerHTML=shH;
+const pb=s.playback;
+let pbH='';
+if(!pb||!pb.active){pbH='<span class="muted">geen actieve streams</span>';}
+else{
+pbH+='<table><tr><th>stream</th><th>mode</th><th>required</th><th>delivery</th><th>runtime</th></tr>';
+(pb.streams||[]).forEach(st=>{
+const dl=st.delivery||{};
+const dls=dl.state||'?';
+const cls=dls==='HEALTHY'?'ok':(dls==='DEGRADED'?'bad':(dls==='MARGINAL'||dls==='RECOVERING'?'warn':'muted'));
+pbH+='<tr><td>'+(st.item_id||'').slice(0,10)+'</td><td>'+esc(st.read_mode)+'</td><td>'+esc(st.required_mbit)+' Mbit/s</td><td class="'+cls+'">'+esc(dls)+' '+esc(dl.rolling_mbit??'—')+' Mbit/s</td><td>'+esc(dl.longest_stall_s??'—')+'s stall</td></tr>';
+});
+pbH+='</table>';}
+document.getElementById('pbx').innerHTML=pbH;
 const alerts=[];
 if((rh.NO_SOURCE||0)>0)alerts.push(rh.NO_SOURCE+' NO_SOURCE');
 if((mh.FAILED_RETRYABLE||0)>0)alerts.push(mh.FAILED_RETRYABLE+' retryable');
