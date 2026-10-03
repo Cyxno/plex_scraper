@@ -43,6 +43,9 @@ class SessionContext:
     monitor: object = None        # DeliveryMonitor (runtime delivery)
 
 
+GB = 10**9
+
+
 class UnresolvedError(Exception):
     pass
 
@@ -531,6 +534,15 @@ class Resolver:
                                      fallback_after_errors=self.s.adaptive_fallback_errors)
         if two_way:
             self.metrics["two_way_sessions"] += 1
+            # FASE 18: playback-scoped hot spare (link-prewarm, geen benchmark)
+            if self.jit.cfg.hot_spare:
+                asyncio.create_task(self.jit.warm_spare(item, source))
+            # metadata-learning: duration bij play (playback-scoped) →
+            # media-bitrate wordt 'derived' i.p.v. floor-schatting
+            if (getattr(self.s, "tautulli_url", "") and getattr(self.s, "tautulli_apikey", "")
+                    and item.media_bitrate_mbit is None and item.duration_s is None
+                    and item.kind == "movie" and (source.size or 0) > 20 * GB):
+                asyncio.create_task(self._learn_duration(item))
         session = m.Session(handle=m.new_id(), media_item_id=item_id,
                             source_id=source.id, generation=source.generation,
                             size=source.size)
@@ -555,6 +567,32 @@ class Resolver:
               read_mode="2way" if two_way else "single",
               required_mbit=round(required, 1))
         return ctx
+
+    async def _learn_duration(self, item: m.MediaItem) -> None:
+        """Playback-scoped metadata-learning: filmduur uit de Tautulli-
+        historie → media-bitrate 'derived' (betere drempels, geen floor)."""
+        try:
+            import httpx
+            title = (item.title or "").strip()
+            if not title:
+                return
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as c:
+                resp = await c.get(
+                    f"{self.s.tautulli_url.rstrip('/')}/api/v2",
+                    params={"apikey": self.s.tautulli_apikey, "cmd": "get_history",
+                            "search": title, "length": 5})
+                rows = (resp.json().get("response", {}).get("data", {}) or {}).get("data") or []
+            for row in rows:
+                dur_ms = row.get("duration")
+                if dur_ms and (not item.year or str(item.year) in str(row.get("year") or "")):
+                    item.duration_s = dur_ms / 1000.0
+                    item.media_bitrate_mbit = None
+                    await self.store.update_item(item)
+                    await self._evt("media_duration_learned", item=item,
+                                    duration_s=item.duration_s)
+                    return
+        except Exception as exc:                        # noqa: BLE001
+            log.info("duration-learning overgeslagen: %r", exc)
 
     def get_session(self, handle: str) -> SessionContext:
         ctx = self.sessions.get(handle)
