@@ -232,6 +232,7 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
             "reads": r["reads"],
             "read_bytes": r["read_bytes"],
             "caches": resolver.caches.stats(),
+            "runtime": dict(sorted(resolver.runtime_metrics.items())),
             "adaptive": {k: resolver.metrics[k] for k in
                          ("prefetch_bytes", "prefetch_cancelled_bytes",
                           "prefetch_hits", "prefetch_errors",
