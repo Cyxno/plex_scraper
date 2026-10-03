@@ -523,6 +523,7 @@ class Resolver:
         # dit over. Bounded: FAST/MARGINAL direct, DEGRADED ≤ jit_max_wait_s.
         jit_decision = None
         jit_note = ""
+        item._jit_risk = profile.risk
         if two_way != 0 and required > 0:
             jit_decision = await self.jit.preflight_async(item, source, required)
             jit_note = jit_decision.note

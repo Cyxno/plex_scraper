@@ -225,3 +225,44 @@ def test_severity_bands():
     assert current_severity(60.0, 65.4, cfg) == "MARGINAL"
     assert current_severity(7.2, 65.4, cfg) == "SEVERELY_DEGRADED"
 
+
+
+def test_high_risk_unknown_heavy_remux_forces_preflight(tmp_path):
+    """(22) unknown metadata + 65 GB 2160p REMUX = HIGH_RISK → géén
+    low-bitrate fast path ondanks lage floor-required."""
+    from plex_scraper.resolver.media import build_profile
+    prof = build_profile(size_bytes=65 * GB, media_bitrate_mbit=None,
+                         duration_s=None, floor_mbit=25.0)
+    assert prof.risk == "HIGH_RISK" and prof.confidence == "floor"
+    item = _mk_item()
+    item._jit_risk = prof.risk
+    r, jit = _jit_with_candidates([], [_mk_source("h1", REMUX_DV)], {})
+    jit._probe = None
+    probed = {"n": 0}
+
+    async def probe(source, sample_bytes=None):
+        probed["n"] += 1
+        return {"mbit": 20.0, "ttfb_s": 1.0, "short": False, "errors": 0}
+    jit._probe = probe
+    d = asyncio.run(jit.preflight_async(item, _mk_source("h1", REMUX_DV), 37.5))
+    assert probed["n"] == 1                            # wél preflight gedraaid
+    assert d.band == DEGRADED                          # 20 < 0,8×37,5
+
+
+def test_low_bitrate_normal_risk_still_fast_path():
+    from plex_scraper.resolver.media import build_profile
+    prof = build_profile(size_bytes=2 * GB, media_bitrate_mbit=None,
+                         duration_s=None, floor_mbit=25.0)
+    assert prof.risk == "normal"
+    item = _mk_item()
+    item._jit_risk = prof.risk
+    r, jit = _jit_with_candidates([], [_mk_source("h1", REMUX_DV)], {})
+    jit._probe = None
+    probed = {"n": 0}
+
+    async def probe(source, sample_bytes=None):
+        probed["n"] += 1
+        return {"mbit": 30.0, "ttfb_s": 1.0, "short": False, "errors": 0}
+    jit._probe = probe
+    d = asyncio.run(jit.preflight_async(item, _mk_source("h1", REMUX_DV), 37.5))
+    assert probed["n"] == 0 and d.band == FAST

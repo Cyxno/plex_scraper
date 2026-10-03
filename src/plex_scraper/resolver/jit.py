@@ -217,8 +217,10 @@ class JitController:
         self.metrics["jit_preflights_total"] += 1
         if not cfg.enabled:
             return JitDecision(FAST, 0, 0, required_mbit, note="jit disabled")
-        if required_mbit < cfg.preflight_min_mbit:
-            # FASE 2: lage-bitrate → direct fast path, geen preflight
+        risk = getattr(item, "_jit_risk", None)
+        if required_mbit < cfg.preflight_min_mbit and risk != "HIGH_RISK":
+            # FASE 2: lage-bitrate → direct fast path, geen preflight —
+            # BEHALVE HIGH_RISK (unknown metadata + zware file, FASE 10)
             self.metrics["jit_low_bitrate_fastpath"] += 1
             return JitDecision(FAST, 0, 0, required_mbit, note="low-bitrate fast path")
         cached = self._cached(item.plex_path)
