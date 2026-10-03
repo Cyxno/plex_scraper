@@ -60,6 +60,12 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
             no_source_base_s=getattr(settings, "sweeper_no_source_base_s", 3600.0),
             no_source_max_s=getattr(settings, "sweeper_no_source_max_s", 86400.0),
             fail_strikes=getattr(settings, "sweeper_fail_strikes", 2),
+            playback_pause=getattr(settings, "sweeper_playback_pause", True),
+            playback_min_mbit=getattr(settings, "playback_min_mbit", 25.0),
+            throughput_margin=getattr(settings, "sweeper_throughput_margin", 1.5),
+            throughput_strikes=getattr(settings, "sweeper_throughput_strikes", 3),
+            throughput_probe_interval_s=getattr(
+                settings, "sweeper_throughput_probe_interval_s", 3600.0),
         )
 
         @app.on_event("startup")
@@ -103,6 +109,22 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         return result
 
     # --------------------------------------------------- self-healing API
+    @app.get("/api/playback/active")
+    async def playback_active():
+        """Sessies met recente reads = actieve playback (voor sweeper-pauze)."""
+        cutoff = time.time() - 90.0
+        out = []
+        for handle, ctx in resolver.sessions.items():
+            last = ctx.last_read_at or 0
+            if last >= cutoff:
+                out.append({"handle": handle,
+                            "item_id": ctx.session.media_item_id,
+                            "read_count": ctx.session.read_count,
+                            "size": ctx.session.size,
+                            "idle_s": round(time.time() - last, 1)})
+        return {"active": len(out), "streams": out,
+                "threshold_s": 90}
+
     @app.get("/api/selfheal/status")
     async def selfheal_status():
         sweeper = app.state.sweeper if hasattr(app.state, "sweeper") else None
@@ -127,6 +149,9 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
                 "upgrade_enabled": sweeper.upgrade_enabled,
                 "items_per_hour": sweeper.items_per_hour,
                 "no_source_tracked": len(sweeper.no_source_retry._fail_count),
+                "playback_pause": sweeper.playback_pause,
+                "active_playback": await sweeper.playback_active_count(),
+                "degraded_throughput": sorted(sweeper.degraded_throughput),
                 "counts_24h": counts,
                 "events": evs}
 

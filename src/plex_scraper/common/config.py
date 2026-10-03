@@ -84,6 +84,12 @@ class Settings:
     sweeper_no_source_base_s: float = 3600.0
     sweeper_no_source_max_s: float = 86400.0
     sweeper_fail_strikes: int = 2
+    sweeper_playback_pause: bool = True
+    sweeper_stale_reconcile_s: float = 900.0
+    playback_min_mbit: float = 25.0
+    sweeper_throughput_margin: float = 1.5
+    sweeper_throughput_strikes: int = 3
+    sweeper_throughput_probe_interval_s: float = 3600.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -137,6 +143,17 @@ class Settings:
             sweeper_no_source_max_s=float(
                 os.environ.get("SWEEPER_NO_SOURCE_MAX_S", cls.sweeper_no_source_max_s)),
             sweeper_fail_strikes=_int("SWEEPER_FAIL_STRIKES", cls.sweeper_fail_strikes),
+            sweeper_playback_pause=_bool("SWEEPER_PLAYBACK_PAUSE", cls.sweeper_playback_pause),
+            sweeper_stale_reconcile_s=float(
+                os.environ.get("SWEEPER_STALE_RECONCILE_S", cls.sweeper_stale_reconcile_s)),
+            playback_min_mbit=float(os.environ.get("PLAYBACK_MIN_MBIT", cls.playback_min_mbit)),
+            sweeper_throughput_margin=float(
+                os.environ.get("SWEEPER_THROUGHPUT_MARGIN", cls.sweeper_throughput_margin)),
+            sweeper_throughput_strikes=_int(
+                "SWEEPER_THROUGHPUT_STRIKES", cls.sweeper_throughput_strikes),
+            sweeper_throughput_probe_interval_s=float(os.environ.get(
+                "SWEEPER_THROUGHPUT_PROBE_INTERVAL_S",
+                cls.sweeper_throughput_probe_interval_s)),
             torrent_ready_max_polls=_int("TORBOX_MAX_POLLS", cls.torrent_ready_max_polls),
             max_provider_adds_per_resolve=_int(
                 "MAX_PROVIDER_ADDS_PER_RESOLVE", cls.max_provider_adds_per_resolve),

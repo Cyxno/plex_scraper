@@ -127,6 +127,31 @@ class Store:
                 (item.status, item.generation, json.dumps(item.desired), item.updated_at, item.id))
         await self.run(fn)
 
+    async def reconcile_stale(self, timeout_s: float) -> list[dict]:
+        """DOEL 3-watchdog: items die in een tussenstaat (RESOLVING /
+        CANDIDATE_VALIDATION) zijn blijven hangen, worden naar een bruikbare
+        state gereconcilieerd — READY als er een actieve bron is, anders
+        NO_SOURCE. Nooit permanent onzichtbaar voor de sweeper."""
+        def fn(c: sqlite3.Connection):
+            cutoff = m.now() - timeout_s
+            rows = c.execute(
+                "SELECT id, status FROM media_items "
+                "WHERE status IN ('RESOLVING','CANDIDATE_VALIDATION') "
+                "AND updated_at < ?", (cutoff,)).fetchall()
+            out = []
+            for r in rows:
+                active = c.execute(
+                    "SELECT COUNT(*) FROM sources "
+                    "WHERE media_item_id=? AND state='active'",
+                    (r["id"],)).fetchone()[0]
+                new_status = "READY" if active else "NO_SOURCE"
+                c.execute(
+                    "UPDATE media_items SET status=?, updated_at=? WHERE id=?",
+                    (new_status, m.now(), r["id"]))
+                out.append({"id": r["id"], "was": r["status"], "now": new_status})
+            return out
+        return await self.run(fn)
+
     async def get_item(self, item_id: str) -> m.MediaItem | None:
         def fn(c: sqlite3.Connection):
             row = c.execute("SELECT * FROM media_items WHERE id=?", (item_id,)).fetchone()

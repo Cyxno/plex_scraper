@@ -147,6 +147,27 @@ class TorboxProvider(DebridProvider):
                 ) as resp:
                     if resp.status_code in (403, 410):
                         raise LinkExpiredError(f"stream link expired (HTTP {resp.status_code})")
+                    if resp.status_code in (400, 416):
+                        # DOEL 5: TorBox geeft intermitterend HTTP 400 op
+                        # streaming-reads (bijv. 847x library-wide in 1 dag,
+                        # zelfde request las even later probleemloos). Een
+                        # 400 is dus transitief: 1x in-call retry, body en
+                        # context in de log, pas daarna een definitieve fout.
+                        body = b""
+                        try:
+                            body = await resp.aread()
+                        except Exception:                # noqa: BLE001
+                            pass
+                        snippet = body[:200].decode(errors="replace")
+                        event("upstream_http_4xx", status=resp.status_code,
+                              offset=start, length=length, attempt=attempt + 1,
+                              body=snippet)
+                        if resp.status_code == 400 and attempt < self.s.torbox_max_retries - 1:
+                            await asyncio.sleep(2.0 * (attempt + 1))
+                            continue
+                        raise ProviderError(
+                            f"upstream HTTP {resp.status_code} (range {start}-{end}, "
+                            f"body={snippet[:120]!r})")
                     if resp.status_code not in (200, 206):
                         if resp.status_code == 429 or resp.status_code >= 500:
                             await asyncio.sleep(1.0 + attempt)
@@ -187,7 +208,18 @@ class TorboxProvider(DebridProvider):
         body = await self._request("POST", "/torrents/createtorrent",
                                    data={"magnet": magnet, "seed": 3, "allow_zip": "false"})
         created = body.get("data") or {}
-        torrent_id = created.get("torrent_id") or created.get("id")
+        torrent_id = self._extract_torrent_id(created)
+        if torrent_id is None:
+            # duplicate-add antwoordt soms met een lege id terwijl de torrent
+            # al in mylist staat — daar opzoeken i.p.v. pollen met id=""
+            # (dat gaf HTTP 422 int_parsing op /torrents/mylist)
+            self._mylist_ttl_until = 0.0
+            existing = await self._find_in_mylist(info_hash)
+            if existing:
+                return existing
+            raise ProviderError(
+                f"createtorrent gave unusable torrent_id "
+                f"{created.get('torrent_id')!r} and {info_hash} not in mylist")
         for attempt in range(self.s.torrent_ready_max_polls):
             await asyncio.sleep(self.s.torrent_ready_poll_interval)
             detail = await self._request("GET", "/torrents/mylist", params={"id": torrent_id})
@@ -196,6 +228,17 @@ class TorboxProvider(DebridProvider):
                 return torrent
         raise NotReadyError(
             f"torrent {info_hash} not ready after {self.s.torrent_ready_max_polls} polls")
+
+    @staticmethod
+    def _extract_torrent_id(created: dict) -> int | None:
+        """torrent_id uit een createtorrent-response; TorBox stuurt bij
+        duplicate-adds soms '' — dat is geen geldige id."""
+        raw = created.get("torrent_id") or created.get("id")
+        try:
+            tid = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return tid if tid > 0 else None
 
     _SE_EP = re.compile(r"S\d{1,2}E\d{1,3}", re.I)
     MIN_MEDIA_BYTES = 20 << 20

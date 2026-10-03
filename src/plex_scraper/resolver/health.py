@@ -42,7 +42,12 @@ class HealthSweeper:
                  min_source_age_s: float = 3600.0,
                  no_source_base_s: float = 3600.0,
                  no_source_max_s: float = 86400.0,
-                 fail_strikes: int = 2):
+                 fail_strikes: int = 2,
+                 playback_pause: bool = True,
+                 playback_min_mbit: float = 25.0,
+                 throughput_margin: float = 1.5,
+                 throughput_strikes: int = 3,
+                 throughput_probe_interval_s: float = 3600.0):
         self.resolver = resolver
         self.db_path = db_path
         self.items_per_hour = items_per_hour
@@ -57,11 +62,41 @@ class HealthSweeper:
                                              max_s=no_source_max_s)
         self.fail_strikes = max(1, fail_strikes)
         self._strikes: dict[str, int] = {}
+        # DOEL 6/7/8
+        self.playback_pause = playback_pause
+        self.playback_min_mbit = playback_min_mbit
+        self.throughput_margin = throughput_margin
+        self.throughput_strikes = max(1, throughput_strikes)
+        self.throughput_probe_interval_s = throughput_probe_interval_s
+        self._tp_strikes: dict[str, int] = {}
+        self._degraded: set[str] = set()
+        self._last_probe: dict[str, float] = {}
+        self._pause_logged_until = 0.0
         self._interval = 3600.0 / max(items_per_hour, 1)
         self._running = False
         self._task = None
         self._sweep_lock = asyncio.Lock()
         self._init_db()
+
+    @property
+    def degraded_throughput(self) -> set[str]:
+        return set(self._degraded)
+
+    def _required_mbit(self) -> float:
+        """Vereiste doorvoer: fallback-mediabitrate × veiligheidsmarge
+        (DOEL 7; per-item bitrate volgt in een latere fase)."""
+        return self.playback_min_mbit * self.throughput_margin
+
+    async def playback_active_count(self) -> int:
+        """Aantal sessies met recente reads (actieve playback)."""
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+                r = await client.get(f"{RESOLVER_BASE}/api/playback/active")
+                r.raise_for_status()
+                return int(r.json().get("active", 0))
+        except Exception:                                 # noqa: BLE001
+            return 0
 
     def _init_db(self):
         c = sqlite3.connect(self.db_path)
@@ -131,7 +166,7 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
 
     # ---------------------------------------------------------- health check
     async def check_source(self, item) -> dict:
-        """Lightweight health check: byte-read op de actieve source."""
+        """Health check: EBML byte-read + seek + DOEL 7-doorvoermeting."""
         result = {"plex_path": item.plex_path, "status": item.status,
                   "healthy": False, "repair_needed": False, "upgrade": None}
         if item.status != "READY":
@@ -166,18 +201,110 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                                 await asyncio.sleep(2.0)
                     raise last
 
+                # DOEL 7: eerste read = 1 MB, meten TTFB + doorvoer; deze
+                # read dient tegelijk als EBML-check (geen extra request)
+                t0 = time.monotonic()
                 d1 = await _read(
-                    f"{RESOLVER_BASE}/stream/{handle}?offset=0&length=64")
+                    f"{RESOLVER_BASE}/stream/{handle}?offset=0&length=1048576")
+                ttfb_s = round(time.monotonic() - t0, 2)
+                mbit = len(d1) * 8 / 1e6 / max(ttfb_s, 1e-6)
                 d2 = await _read(
-                    f"{RESOLVER_BASE}/stream/{handle}?offset=65536&length=64")
+                    f"{RESOLVER_BASE}/stream/{handle}?offset=65536&length=65536")
                 await client.delete(f"{RESOLVER_BASE}/open/{handle}")
-            result["healthy"] = (len(d1) == 64 and len(d2) == 64
+            result["healthy"] = (len(d1) >= 64 and len(d2) == 65536
                                  and d1[:4] == bytes.fromhex("1a45dfa3"))
+            result["ttfb_s"] = ttfb_s
+            result["mbit"] = round(mbit, 1)
+            result["required_mbit"] = round(self._required_mbit(), 1)
+            self._throughput_observe(item.plex_path, result)
         except Exception as e:
             result["error"] = repr(e)[:80]
         if not result["healthy"]:
             result["repair_needed"] = True
         return result
+
+    # ------------------------------------------------- DOEL 7: throughput
+    def _throughput_observe(self, plex_path: str, result: dict) -> None:
+        """Shadow-classificatie: pas na N opeenvolgende slechte observaties
+        (strikes) ontstaat DEGRADED_THROUGHPUT; één trage meting nooit."""
+        required = result.get("required_mbit", 0)
+        mbit = result.get("mbit", 0.0)
+        ttfb = result.get("ttfb_s", 0.0)
+        bad = mbit < required or ttfb > 5.0
+        if not bad:
+            if plex_path in self._degraded:
+                self._degraded.discard(plex_path)
+                self._log_json(plex_path, "throughput_recovered",
+                               {"mbit": mbit, "required_mbit": required})
+            self._tp_strikes.pop(plex_path, None)
+            return
+        strikes = self._tp_strikes.get(plex_path, 0) + 1
+        self._tp_strikes[plex_path] = strikes
+        if strikes >= self.throughput_strikes and plex_path not in self._degraded:
+            self._degraded.add(plex_path)
+            self._log_json(plex_path, "throughput_degraded", {
+                "mbit": mbit, "ttfb_s": ttfb, "required_mbit": required,
+                "strikes": strikes})
+        elif plex_path not in self._degraded:
+            self._log_event(plex_path, "throughput_strike",
+                            json.dumps({"strike": strikes,
+                                        "of": self.throughput_strikes,
+                                        "mbit": mbit, "ttfb_s": ttfb}))
+
+    async def _throughput_would_switch(self, item, measured_mbit: float) -> None:
+        """DOEL 8: shadow throughput-repair — zoek kandidaten, identity-gate,
+        doorvoer-probe op de beste cached kandidaat, rapporteer WOULD SWITCH.
+        Switcht NOOIT; alleen event-rapportage."""
+        plex_path = item.plex_path
+        last = self._last_probe.get(plex_path, 0.0)
+        if time.time() - last < self.throughput_probe_interval_s:
+            return
+        self._last_probe[plex_path] = time.time()
+        try:
+            shadow = await self._shadow_evaluate(item)
+            best = shadow.get("best")
+            if not best:
+                self._log_json(plex_path, "throughput_no_alternative",
+                               {"identity_rejected": shadow.get("identity_rejected")})
+                return
+            cand_hash = best["hash"]
+            src = None
+            for s in await self.resolver.store.list_sources(item.id):
+                if s.info_hash == cand_hash:
+                    src = s
+                    break
+            if src is None or not src.cached:
+                # alleen cached kandidaten proben: geen provider-add-druk
+                self._log_json(plex_path, "throughput_probe_skipped",
+                               {"reason": "best candidate not cached",
+                                "hash": cand_hash[:16]})
+                return
+            torrent = await self.resolver.provider.ensure_torrent(
+                src.info_hash, src.torrent_name)
+            url = await self.resolver.provider.get_stream_url(
+                torrent.torrent_id, src.file_id or 0)
+            t0 = time.monotonic()
+            data = await self.resolver.provider.read_range(
+                url, min(int(1e8), max(0, int(src.size or 0) - 8388608)), 8388608)
+            dt = max(time.monotonic() - t0, 1e-6)
+            cand_mbit = len(data) * 8 / 1e6 / dt
+            required = self._required_mbit()
+            improvement = cand_mbit / max(measured_mbit, 0.1)
+            if cand_mbit >= required and improvement >= 1.5:
+                self._log_json(plex_path, "throughput_would_switch", {
+                    "current_mbit": round(measured_mbit, 1),
+                    "candidate_mbit": round(cand_mbit, 1),
+                    "improvement": round(improvement, 2),
+                    "required_mbit": round(required, 1),
+                    "candidate_hash": cand_hash})
+            else:
+                self._log_json(plex_path, "throughput_probe_no_better", {
+                    "current_mbit": round(measured_mbit, 1),
+                    "candidate_mbit": round(cand_mbit, 1),
+                    "required_mbit": round(required, 1)})
+        except Exception as exc:                          # noqa: BLE001
+            self._log_json(plex_path, "throughput_probe_error",
+                           {"error": repr(exc)[:120]})
 
     # ---------------------------------------------------------- shadow eval
     async def _shadow_evaluate(self, item) -> dict:
@@ -290,6 +417,26 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
             await self._sweep_locked()
 
     async def _sweep_locked(self):
+        # DOEL 6: geen background traffic tijdens actieve playback —
+        # geen health sweeps, geen repairs, geen throughput-probes
+        if self.playback_pause:
+            active = await self.playback_active_count()
+            if active > 0:
+                if time.time() >= self._pause_logged_until:
+                    self._log_json("sweeper", "sweep_paused_playback",
+                                   {"active_streams": active})
+                    self._pause_logged_until = time.time() + 1800.0
+                log.info("sweep gepauzeerd: %d actieve playback-streams", active)
+                return
+
+        # DOEL 3-watchdog: tussenstanden die vastgelopen zijn reconciliëren
+        try:
+            stale = await self.resolver.store.reconcile_stale(900.0)
+            for s in stale:
+                self._log_json("sweeper", "stale_state_reconciled", s)
+        except Exception as e:                            # noqa: BLE001
+            log.warning("stale reconcile fout: %s", e)
+
         batch = await self._next_batch(min(self.items_per_hour, 50))
         if not batch:
             return
@@ -345,6 +492,10 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                             + self.upgrade_min_score_delta:
                         upgrades += 1
                         self._log_json(plex_path, "upgrade_available", shadow)
+                elif plex_path in self._degraded:
+                    # DOEL 8: shadow throughput-repair (rapporteert alleen)
+                    await self._throughput_would_switch(
+                        item, result.get("mbit", 0.0))
                 if result.get("healthy"):
                     self.no_source_retry.record_success(plex_path)
                     self._strikes.pop(plex_path, None)

@@ -200,6 +200,9 @@ def create_web_app(settings: Settings) -> FastAPI:
                 "upgrade": ("aan" if sh.get("upgrade_enabled") else "uit"),
                 "items_per_hour": sh.get("items_per_hour"),
                 "no_source_tracked": sh.get("no_source_tracked", 0),
+                "playback_pause": sh.get("playback_pause", False),
+                "active_playback": sh.get("active_playback", 0),
+                "degraded_throughput": len(sh.get("degraded_throughput") or []),
                 "counts_24h": sh.get("counts_24h", {}),
                 "events": [
                     {"ts": e.get("ts"), "event": e.get("event"),

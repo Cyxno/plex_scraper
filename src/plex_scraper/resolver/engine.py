@@ -31,6 +31,7 @@ class SessionContext:
     source: m.Source
     reader: RangeReader
     opened_at: float = field(default_factory=time.monotonic)
+    last_read_at: float = 0.0     # wall-clock; 0 = nog niet gelezen
 
 
 class UnresolvedError(Exception):
@@ -126,7 +127,18 @@ class Resolver:
         previous = await self._active_source(item.id)
         item.status = m.ItemStatus.RESOLVING.value
         await self.store.update_item(item)
+        try:
+            return await self._resolve_attempt(item, reason, previous, started)
+        except Exception as exc:
+            # crash-safe (DOEL 3): een exception mag de item-status nooit
+            # vastlaten in een tussenstaat — reconcilieer naar de vorige
+            # bruikbare state en rapporteer
+            await self._reconcile_after_crash(item, reason, exc)
+            raise
 
+    async def _resolve_attempt(self, item: m.MediaItem, reason: str,
+                               previous: m.Source | None,
+                               started: float) -> m.Source | None:
         candidates = await self._gather_candidates(item)
         ranked = await self._rank_candidates(item, candidates)
         item.status = m.ItemStatus.CANDIDATE_VALIDATION.value
@@ -149,19 +161,29 @@ class Resolver:
         fallback_count = 0
         provider_adds = 0
         for cand, _score in ranked:
-            # hard identity gate: een candidate die niet titel/series/SxxEyy
-            # matcht wordt nooit gevalideerd of geactiveerd — ook niet als
-            # hij de hoogste score heeft
-            ok, why = identity_gate(item.title, item.series,
-                                    item.season, item.episode,
-                                    cand.torrent_name, item.year)
-            if not ok:
-                await self._evt("candidate_identity_rejected", item=item,
-                                hash=cand.info_hash, name=cand.torrent_name,
-                                reason=why)
-                continue
-            if cand.info_hash in bad_hashes:
-                continue
+            # DOEL 2: de huidige actieve bron is grandfathered — hij is
+            # historisch al identiteits-geverifieerd en mag bij re-resolve
+            # opnieuw gevalideerd/herkozen worden, ook als zijn release-naam
+            # (legacy season-pack) niet aan de identity-regels voldoet.
+            # NIEUWE candidates blijven door de harde gate.
+            grandfathered = (previous is not None
+                             and cand.info_hash == previous.info_hash)
+            if not grandfathered:
+                ok, why = identity_gate(item.title, item.series,
+                                        item.season, item.episode,
+                                        cand.torrent_name, item.year)
+                if not ok:
+                    await self._evt("candidate_identity_rejected", item=item,
+                                    hash=cand.info_hash, name=cand.torrent_name,
+                                    reason=why)
+                    continue
+                if cand.info_hash in bad_hashes:
+                    continue
+            elif cand.info_hash in bad_hashes:
+                # grandfathered probeert ondanks bad-marking opnieuw: de
+                # validatie-probe beslist (transiënte 400's zijn geen bewijs)
+                await self._evt("candidate_grandfathered_retry", item=item,
+                                hash=cand.info_hash, name=cand.torrent_name)
             if cand.info_hash not in self._cached_hashes():
                 if provider_adds >= self.s.max_provider_adds_per_resolve:
                     await self._evt("resolution_skip_uncached", item=item,
@@ -189,12 +211,64 @@ class Resolver:
                       else f"{reason}:previous_source_replaced"))
             return source
 
+        # DOEL 1: een gefaalde repair mag een nog-leesbare actieve bron nooit
+        # omzetten naar NO_SOURCE. Probe de vorige bron; leest die nog, dan
+        # behouden we hem en blijft het item READY (alleen event/history).
+        if previous is not None and await self._probe_readable(previous):
+            item.status = m.ItemStatus.READY.value
+            await self.store.update_item(item)
+            self.metrics["resolve_latency_sum"] += time.monotonic() - started
+            await self._evt("repair_kept_current", item=item, reason=reason,
+                  hash=previous.info_hash,
+                  candidate_count=len(candidates), fallback_count=fallback_count,
+                  resolution_latency=round(time.monotonic() - started, 3),
+                  reason_for_source_switch=f"{reason}:kept_current_source")
+            return previous
+
         item.status = m.ItemStatus.NO_SOURCE.value
         await self.store.update_item(item)
         await self._evt("resolution_failed", item=item, reason=reason,
               candidate_count=len(candidates), fallback_count=fallback_count,
               resolution_latency=round(time.monotonic() - started, 3))
         return None
+
+    async def _probe_readable(self, src: m.Source) -> bool:
+        """Twee kleine leesprobes op een bestaande bron (offset 0 en midden).
+
+        Alleen als BEIDE falen geldt de bron als onbruikbaar; één transient
+        dat faalt is geen bewijs (de 400-retry zit al in read_range).
+        """
+        size = max(int(src.size or 0), 1)
+        for offset in (0, size // 2):
+            try:
+                torrent = await self.provider.ensure_torrent(
+                    src.info_hash, src.torrent_name)
+                url = await self._link_for(src, torrent)
+                data = await self.provider.read_range(
+                    url, min(offset, max(0, size - 65536)), 65536)
+                if data:
+                    return True
+            except Exception as exc:                     # noqa: BLE001
+                await self._evt("keep_current_probe_failed",
+                                item_id=src.media_item_id, hash=src.info_hash,
+                                offset=offset, error=repr(exc)[:120])
+        return False
+
+    async def _reconcile_after_crash(self, item: m.MediaItem,
+                                     reason: str, exc: Exception) -> None:
+        """Reconcilieer een gecrashte resolve: actieve bron → READY, anders
+        NO_SOURCE. Nooit permanent in RESOLVING/CANDIDATE_VALIDATION blijven
+        hangen (de sweeper slaat tussenstanden over)."""
+        try:
+            previous = await self._active_source(item.id)
+            item.status = (m.ItemStatus.READY.value if previous is not None
+                           else m.ItemStatus.NO_SOURCE.value)
+            await self.store.update_item(item)
+            await self._evt("resolution_crashed", item=item, reason=reason,
+                  error=repr(exc)[:160], reconciled_status=item.status)
+        except Exception as inner:                       # noqa: BLE001
+            log.error("reconcile_after_crash faalde voor %s: %r",
+                      item.plex_path, inner)
 
     def _cached_hashes(self) -> set:
         hashes = set()
@@ -404,6 +478,7 @@ class Resolver:
         ctx = self.get_session(handle)
         t0 = time.monotonic()
         data = await ctx.reader.read(offset, length)
+        ctx.last_read_at = time.time()
         self.metrics["reads"] += 1
         self.metrics["read_bytes"] += len(data)
         self.metrics["request_count"] += 1
