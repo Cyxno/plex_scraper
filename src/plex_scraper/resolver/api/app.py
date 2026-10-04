@@ -280,10 +280,12 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         if item is None:
             raise KeyError(f"unknown media item {item_id}")
         # FASE 2: media-aware bitrate/kENNIS kunnen per item gezet worden
-        for key in ("duration_s", "media_bitrate_mbit",
-                    "imdb_id", "tmdb_id", "tvdb_id"):
+        for key in ("duration_s", "media_bitrate_mbit"):
             if key in payload and payload[key] is not None:
                 setattr(item, key, float(payload[key]))
+        for key in ("imdb_id", "tmdb_id", "tvdb_id"):
+            if key in payload and payload[key]:
+                setattr(item, key, str(payload[key]))
         if any(key in payload for key in ("duration_s", "media_bitrate_mbit")):
             await resolver.store.update_item(item)
         return item_out(item)
