@@ -86,3 +86,31 @@ def test_parse_guids():
     g = parse_guids(["imdb://tt43338257", "tmdb://7492638", "tvdb://11542639"])
     assert g == {"imdb_id": "tt43338257", "tmdb_id": "7492638", "tvdb_id": "11542639"}
     assert parse_guids([])["imdb_id"] is None
+
+
+def test_series_search_key_uses_show_imdb():
+    from plex_scraper.common.domain.models import MediaItem
+    it = MediaItem(id="e", kind="episode", title="Song 2", plex_path="p.mkv",
+                   series="MobLand", season=2, episode=2,
+                   imdb_id="tt43338257", show_imdb_id="tt Show".replace(" ", "") or None)
+    it.show_imdb_id = "tt111"
+    key = it.search_key()
+    assert key["imdb_id"] == "tt111"                # show-imdb heeft voorrang
+
+
+def test_series_missing_show_imdb_flagged():
+    from plex_scraper.common.domain.models import MediaItem
+    it = MediaItem(id="e", kind="episode", title="Song 2", plex_path="p.mkv",
+                   series="MobLand", season=2, episode=2,
+                   imdb_id="tt43338257")
+    key = it.search_key()
+    assert key["show_imdb_missing"] is True     # FASE 11-guard signaleert
+
+
+def test_series_fallback_to_episode_imdb_until_backfill():
+    """FASE 12-veilig: zonder show-imdb valt search terug op episode-imdb
+    (legacy gedrag) i.p.v. NO_SOURCE — tot show-backfill voltooid is."""
+    from plex_scraper.common.domain.models import MediaItem
+    it = MediaItem(id="e", kind="episode", title="X", plex_path="p.mkv",
+                   series="MobLand", season=2, episode=2, imdb_id="tt43338257")
+    assert it.search_key()["imdb_id"] == "tt43338257"

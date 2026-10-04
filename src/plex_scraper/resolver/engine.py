@@ -175,6 +175,14 @@ class Resolver:
     async def _resolve_attempt(self, item: m.MediaItem, reason: str,
                                previous: m.Source | None,
                                started: float) -> m.Source | None:
+        # FASE 11: series zonder show-imdb → expliciet incomplete, geen
+        # stille episode-imdb-substitutie en geen valse NO_SOURCE
+        if item.kind == "episode" and not getattr(item, "show_imdb_id", None):
+            await self._evt("search_identity_incomplete", item=item,
+                            reason="MISSING_SHOW_EXTERNAL_ID")
+            item.status = m.ItemStatus.NO_SOURCE.value
+            await self.store.update_runtime(item)
+            return None
         candidates = await self._gather_candidates(item)
         ranked = await self._rank_candidates(item, candidates)
         item.status = m.ItemStatus.CANDIDATE_VALIDATION.value

@@ -57,6 +57,9 @@ class MediaItem:
     imdb_id: str | None = None
     tmdb_id: int | None = None
     tvdb_id: int | None = None
+    show_imdb_id: str | None = None    # serie: show-level IMDb
+    show_tmdb_id: int | None = None
+    show_tvdb_id: int | None = None
     status: str = ItemStatus.NO_SOURCE.value
     generation: int = 0
     desired: dict = field(default_factory=dict)   # quality intent (FASE 15)

@@ -70,6 +70,9 @@ def _row_to_item(row: sqlite3.Row) -> m.MediaItem:
         status=row["status"], generation=row["generation"],
         desired=json.loads(row["desired"] or "{}"),
         duration_s=row["duration_s"] if "duration_s" in row.keys() else None,
+        show_imdb_id=row["show_imdb_id"] if "show_imdb_id" in row.keys() else None,
+        show_tmdb_id=row["show_tmdb_id"] if "show_tmdb_id" in row.keys() else None,
+        show_tvdb_id=row["show_tvdb_id"] if "show_tvdb_id" in row.keys() else None,
         media_bitrate_mbit=row["media_bitrate_mbit"] if "media_bitrate_mbit" in row.keys() else None,
         created_at=row["created_at"], updated_at=row["updated_at"],
     )
@@ -101,6 +104,9 @@ class Store:
             # migrate: media-bitrate kolommen (adaptive-throughput fase)
             for col, ddl in (("duration_s", "ALTER TABLE media_items ADD COLUMN duration_s REAL"),
                              ("media_bitrate_mbit", "ALTER TABLE media_items ADD COLUMN media_bitrate_mbit REAL"),
+                             ("show_imdb_id", "ALTER TABLE media_items ADD COLUMN show_imdb_id TEXT"),
+                             ("show_tmdb_id", "ALTER TABLE media_items ADD COLUMN show_tmdb_id TEXT"),
+                             ("show_tvdb_id", "ALTER TABLE media_items ADD COLUMN show_tvdb_id TEXT"),
                              ("delivery_bad_until", "ALTER TABLE sources ADD COLUMN delivery_bad_until REAL NOT NULL DEFAULT 0")):
                 try:
                     self._conn.execute(ddl)
@@ -121,13 +127,14 @@ class Store:
             c.execute(
                 "INSERT INTO media_items (id,kind,title,plex_path,series,season,episode,year,"
                 "imdb_id,tmdb_id,tvdb_id,status,generation,desired,created_at,updated_at,"
-                "duration_s,media_bitrate_mbit) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "duration_s,media_bitrate_mbit,show_imdb_id,show_tmdb_id,show_tvdb_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (item.id, item.kind, item.title, item.plex_path, item.series, item.season,
                  item.episode, item.year, item.imdb_id, item.tmdb_id, item.tvdb_id,
                  item.status, item.generation, json.dumps(item.desired),
                  item.created_at, item.updated_at,
-                 item.duration_s, item.media_bitrate_mbit))
+                 item.duration_s, item.media_bitrate_mbit,
+                 item.show_imdb_id, item.show_tmdb_id, item.show_tvdb_id))
         await self.run(fn)
         return item
 

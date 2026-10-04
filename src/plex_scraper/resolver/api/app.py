@@ -283,7 +283,8 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         for key in ("duration_s", "media_bitrate_mbit"):
             if key in payload and payload[key] is not None:
                 setattr(item, key, float(payload[key]))
-        for key in ("imdb_id", "tmdb_id", "tvdb_id"):
+        for key in ("imdb_id", "tmdb_id", "tvdb_id",
+                    "show_imdb_id", "show_tmdb_id", "show_tvdb_id"):
             if key in payload and payload[key]:
                 setattr(item, key, str(payload[key]))
         # persist bij élke herkend veld — een PATCH met alléén external IDs
