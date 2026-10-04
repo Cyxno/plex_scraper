@@ -212,19 +212,32 @@ class Store:
     # --------------------------------------------------------------- sources
     async def upsert_source(self, src: m.Source) -> m.Source:
         def fn(c: sqlite3.Connection):
-            c.execute(
-                "INSERT INTO sources (id,media_item_id,generation,provider,info_hash,torrent_name,"
-                "file_id,file_name,size,resolution,codec,hdr,audio,language,release_type,seeders,"
-                "cached,score,score_json,state,failure_count,bad_until,last_verified,created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(media_item_id,provider,info_hash,file_id) DO UPDATE SET "
-                "file_name=excluded.file_name, size=excluded.size, cached=excluded.cached, "
-                "score=excluded.score, score_json=excluded.score_json",
-                (src.id, src.media_item_id, src.generation, src.provider, src.info_hash,
-                 src.torrent_name, src.file_id, src.file_name, src.size, src.resolution,
-                 src.codec, src.hdr, src.audio, src.language, src.release_type, src.seeders,
-                 int(src.cached), src.score, json.dumps(src.score_json), src.state,
-                 src.failure_count, src.bad_until, src.last_verified, src.created_at))
+            params = (src.id, src.media_item_id, src.generation, src.provider, src.info_hash,
+                      src.torrent_name, src.file_id, src.file_name, src.size, src.resolution,
+                      src.codec, src.hdr, src.audio, src.language, src.release_type, src.seeders,
+                      int(src.cached), src.score, json.dumps(src.score_json), src.state,
+                      src.failure_count, src.bad_until, src.last_verified, src.created_at)
+            try:
+                c.execute(
+                    "INSERT INTO sources (id,media_item_id,generation,provider,info_hash,torrent_name,"
+                    "file_id,file_name,size,resolution,codec,hdr,audio,language,release_type,seeders,"
+                    "cached,score,score_json,state,failure_count,bad_until,last_verified,created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(media_item_id,provider,info_hash,file_id) DO UPDATE SET "
+                    "file_name=excluded.file_name, size=excluded.size, cached=excluded.cached, "
+                    "score=excluded.score, score_json=excluded.score_json", params)
+            except sqlite3.IntegrityError:
+                # Zelfde id hergebruikt via _similar_source (info_hash-match) maar met
+                # een andere file_id: de conflict-target (media_item_id,provider,
+                # info_hash,file_id) greep niet en de PK-botste. In-place bijwerken
+                # in plaats van de resolve te crashen (historische Jackass 3D-crash).
+                c.execute(
+                    "UPDATE sources SET generation=?, provider=?, info_hash=?, torrent_name=?, "
+                    "file_id=?, file_name=?, size=?, resolution=?, codec=?, hdr=?, audio=?, "
+                    "language=?, release_type=?, seeders=?, cached=?, score=?, score_json=?, "
+                    "state=?, failure_count=?, bad_until=?, last_verified=?, created_at=? "
+                    "WHERE id=?",
+                    params[2:] + (src.id,))
             row = c.execute(
                 "SELECT * FROM sources WHERE media_item_id=? AND provider=? AND info_hash=? AND file_id IS ?",
                 (src.media_item_id, src.provider, src.info_hash, src.file_id)).fetchone()
