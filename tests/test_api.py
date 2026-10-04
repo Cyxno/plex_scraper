@@ -112,13 +112,16 @@ def test_forced_resolve_and_patch(settings, scorer, got_item):
     assert r.json()["desired"] == {"resolution": "1080p"}
 
 
-def test_patch_imdb_persists(web_env):
-    """Persistence-fix: PATCH met alléén external IDs moet committen."""
-    client, _ = web_env
-    client.post("/media", json={"id": "imp1", "kind": "movie",
-                                "title": "T", "plex_path": "imp.mkv"})
-    r = client.patch("/media/imp1", json={"imdb_id": "tt43338257"})
+def test_patch_imdb_persists(client):
+    """Persistence-fix: PATCH met alléén external IDs moet committeren."""
+    http, *_ = client
+    item = http.post("/media", json={
+        "kind": "episode", "title": "Song 2", "series": "MobLand",
+        "season": 2, "episode": 2, "plex_path": ".ids/9/9/9/9/9/imp-test"}).json()
+    r = http.patch(f"/media/{item['id']}", json={"imdb_id": "tt43338257"})
     assert r.json()["imdb_id"] == "tt43338257"
-    # onafhankelijke read (geen in-memory echo)
-    r2 = client.get("/media/imp1")
+    r2 = http.get(f"/media/{item['id']}")
     assert r2.json()["imdb_id"] == "tt43338257"
+    assert r2.json()["series"] == "MobLand"
+
+
