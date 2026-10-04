@@ -1,0 +1,64 @@
+"""PLEX_ORPHAN detectie + repair-policy tests (FASE 39-selectie)."""
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "src"))
+from plex_scraper.repair.path_repair import (
+    classify_part, episode_match_ok, movie_identity, episode_identity,
+    new_resolver_path, registration_payload, atomic_symlink_swap)
+
+
+def test_01_valid_resolver_symlink_no_repair():
+    r = classify_part("/symlinks/Movies/x.mkv", "/mnt/remote/nzbdav/.ids/a/b")
+    assert r["orphan"] is False and r["resolver_rel"].startswith(".ids/")
+
+
+def test_02_broken_symlink_orphan():
+    r = classify_part("/symlinks/x.mkv", None)
+    assert r["orphan"] and r["reason"] == "BROKEN_SYMLINK"
+
+
+def test_04_legacy_decyparr_target_orphan():
+    r = classify_part("/symlinks/x.mkv", "/mnt/debrid/decypharr/__all__/f.mkv")
+    assert r["orphan"] and r["reason"] == "LEGACY_PATH" and r["legacy"]
+
+
+def test_06_series_identity_requires_season_episode():
+    assert episode_identity("MobLand", None, 2) is None
+    assert episode_identity("MobLand", 2, 2) == {
+        "kind": "episode", "series": "MobLand", "season": 2, "episode": 2}
+
+
+def test_07_movie_identity():
+    assert movie_identity("Foo", 2020)["title"] == "Foo"
+    assert movie_identity(None, 2020) is None
+
+
+def test_13_registration_payload_new_ids_route():
+    p = registration_payload({"kind": "movie", "title": "Foo", "year": 2020}, 5400000)
+    assert p["plex_path"].startswith(".ids/")
+    assert p["duration_s"] == 5400.0
+    assert p["plex_path"] != registration_payload(
+        {"kind": "movie", "title": "Foo"}, 1)["plex_path"]
+
+
+def test_14_atomic_symlink_swap_preserves_pathname(tmp_path):
+    link = tmp_path / "part.mkv"
+    os.symlink("/mnt/debrid/old/target.mkv", link)
+    new_t = "/mnt/remote/nzbdav/.ids/1/2/3/4/5/abc"
+    atomic_symlink_swap(str(link), new_t)
+    assert os.readlink(link) == new_t          # zelfde pathname, nieuwe target
+    assert not os.path.lexists(str(link) + ".repair-tmp")
+
+
+def test_27_wrong_episode_rejected():
+    assert episode_match_ok("Show.S02E03.1080p-GRP", 2, 2) is False
+    assert episode_match_ok("Show.S01E02.1080p-GRP", 2, 2) is False
+
+
+def test_28_correct_episode_and_season_pack():
+    assert episode_match_ok("Show.S02E02.1080p-GRP", 2, 2) is True
+    assert episode_match_ok("Show.S02.Complete.Pack", 2, 2) is False  # pack zonder Eyy-file
+
+
+def test_19_new_route_never_legacy():
+    for _ in range(50):
+        assert new_resolver_path().startswith(".ids/")
