@@ -139,7 +139,8 @@ class Store:
         return item
 
     _ITEM_COLS = ("status", "generation", "desired", "updated_at", "duration_s",
-                  "media_bitrate_mbit", "imdb_id", "tmdb_id", "tvdb_id")
+                  "media_bitrate_mbit", "imdb_id", "tmdb_id", "tvdb_id",
+                  "show_imdb_id", "show_tmdb_id", "show_tvdb_id")
 
     async def update_item(self, item: m.MediaItem, fields: set[str] | None = None) -> None:
         """FASE-persistence: zonder `fields` wordt de volledige row geschreven
