@@ -13,6 +13,7 @@ def item_out(item: m.MediaItem) -> dict:
         "status": item.status, "generation": item.generation,
         "desired": item.desired,
         "duration_s": item.duration_s,
+        "show_imdb_id": item.show_imdb_id,
         "media_bitrate_mbit": item.media_bitrate_mbit,
     }
 

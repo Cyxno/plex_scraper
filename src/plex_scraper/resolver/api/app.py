@@ -290,7 +290,9 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         # persist bij élke herkend veld — een PATCH met alléén external IDs
         # moet ook committen (oude gate liet die stilletjes verdwijnen)
         if any(key in payload for key in ("duration_s", "media_bitrate_mbit",
-                                          "imdb_id", "tmdb_id", "tvdb_id")):
+                                          "imdb_id", "tmdb_id", "tvdb_id",
+                                          "show_imdb_id", "show_tmdb_id",
+                                          "show_tvdb_id")):
             await resolver.store.update_item(item)
         return item_out(item)
 
