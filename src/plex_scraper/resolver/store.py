@@ -57,6 +57,22 @@ CREATE TABLE IF NOT EXISTS events (
   kind TEXT NOT NULL,
   payload TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS maintenance_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_type TEXT NOT NULL,
+  started_at REAL NOT NULL,
+  finished_at REAL,
+  status TEXT NOT NULL DEFAULT 'RUNNING',
+  processed INTEGER NOT NULL DEFAULT 0,
+  changed INTEGER NOT NULL DEFAULT 0,
+  recovered INTEGER NOT NULL DEFAULT 0,
+  skipped INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0,
+  current_item TEXT,
+  progress_total INTEGER,
+  progress_current INTEGER,
+  summary_json TEXT NOT NULL DEFAULT '{}'
+);
 CREATE INDEX IF NOT EXISTS idx_sources_item ON sources(media_item_id);
 CREATE INDEX IF NOT EXISTS idx_events_item ON events(media_item_id);
 """
@@ -305,4 +321,54 @@ class Store:
             return [{"ts": r["ts"], "media_item_id": r["media_item_id"],
                      "generation": r["generation"], "kind": r["kind"],
                      **json.loads(r["payload"])} for r in rows]
+        return await self.run(fn)
+
+    # ------------------------------------------------------ maintenance runs
+    async def job_start(self, job_type: str, progress_total: int | None = None) -> int:
+        def fn(c: sqlite3.Connection):
+            cur = c.execute(
+                "INSERT INTO maintenance_runs (job_type, started_at, status, progress_total) "
+                "VALUES (?,?, 'RUNNING', ?)",
+                (job_type, m.now(), progress_total))
+            return cur.lastrowid
+        return await self.run(fn)
+
+    async def job_progress(self, run_id: int, *, processed: int | None = None,
+                           changed: int | None = None, recovered: int | None = None,
+                           skipped: int | None = None, failed: int | None = None,
+                           current_item: str | None = None) -> None:
+        def fn(c: sqlite3.Connection):
+            c.execute("""UPDATE maintenance_runs SET
+                         processed=COALESCE(?,processed), changed=COALESCE(?,changed),
+                         recovered=COALESCE(?,recovered), skipped=COALESCE(?,skipped),
+                         failed=COALESCE(?,failed), current_item=COALESCE(?,current_item),
+                         progress_current=COALESCE(?,progress_current)
+                         WHERE id=?""",
+                      (processed, changed, recovered, skipped, failed,
+                       current_item, processed, run_id))
+        await self.run(fn)
+
+    async def job_finish(self, run_id: int, status: str = "SUCCESS",
+                         **summary) -> None:
+        def fn(c: sqlite3.Connection):
+            c.execute("UPDATE maintenance_runs SET status=?, finished_at=?, summary_json=? "
+                      "WHERE id=?",
+                      (status, m.now(), json.dumps(summary), run_id))
+        await self.run(fn)
+
+    async def job_runs(self, job_type: str | None = None,
+                       limit: int = 20) -> list[dict]:
+        def fn(c: sqlite3.Connection):
+            if job_type:
+                rows = c.execute("SELECT * FROM maintenance_runs WHERE job_type=? "
+                                 "ORDER BY id DESC LIMIT ?", (job_type, limit)).fetchall()
+            else:
+                rows = c.execute("SELECT * FROM maintenance_runs "
+                                 "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                d["summary_json"] = json.loads(d.get("summary_json") or "{}")
+                out.append(d)
+            return out
         return await self.run(fn)

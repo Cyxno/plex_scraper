@@ -137,7 +137,7 @@ class TestGUIPages:
         cl = web_env([_row()])
         r = cl.get("/")
         assert r.status_code == 200
-        assert "plex_scraper diagnostics" in r.text
+        assert "plex_scraper cockpit" in r.text
         assert "--bg" in r.text
 
     def test_summary_migration_history(self, web_env):

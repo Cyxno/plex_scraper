@@ -302,7 +302,7 @@ def test_09_wrong_identity_rejected(tmp_path):
     from plex_scraper.resolver.selfheal import identity_gate
     cur = _mk_source("cur1", REMUX_DV)
     wrong = _mk_cand("wrong1", "Unrelated.Film.2019.2160p.BluRay.REMUX.HEVC.DV-GRP")
-    ok, why = identity_gate("Movie", None, None, None,
+    ok, why, _sub = identity_gate("Movie", None, None, None,
                             wrong.torrent_name, None)
     assert not ok
 

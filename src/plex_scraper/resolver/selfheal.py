@@ -68,9 +68,13 @@ def _norm_compact(s: str | None) -> str:
 def identity_gate(item_title: str, item_gp: str | None,
                   item_season: int | None, item_episode: int | None,
                   candidate_name: str, item_year: int | None = None,
-                  candidate_year: int | None = None) -> tuple[bool, str]:
+                  candidate_year: int | None = None) -> tuple[bool, str, str]:
     """Harde identity-match tussen media-item en candidate release-naam.
-    Retourneert (pass, reden). Geen score — puur identity."""
+    Retourneert (pass, reden, subreason). Geen score — puur identity.
+
+    subreason: identity_ok | identity_wrong_show | identity_pack_missing_episode
+             | identity_wrong_movie | identity_wrong_year — voor UI/trace;
+             de parent-categorie blijft identity_gate."""
     cname = candidate_name.lower().replace(".", " ").replace("_", " ")
     cname_compact = cname.replace(" ", "")
 
@@ -78,17 +82,19 @@ def identity_gate(item_title: str, item_gp: str | None,
     if not item_gp:
         words = _norm_words(item_title)
         if not words:
-            return True, "onvoldoende metadata voor identity check"
+            return True, "onvoldoende metadata voor identity check", "identity_ok"
         missing = [w for w in words if w not in cname]
         if len(missing) > len(words) // 2:
             compact = _norm_compact(item_title)
             if len(compact) >= 5 and compact in cname_compact:
-                return True, "film identity OK (compact)"
-            return False, f"title mismatch: {missing} niet in candidate"
+                return True, "film identity OK (compact)", "identity_ok"
+            return False, f"title mismatch: {missing} niet in candidate", \
+                "identity_wrong_movie"
         if item_year and candidate_year:
             if abs(int(item_year) - int(candidate_year)) > 1:
-                return False, f"year mismatch: {item_year} vs {candidate_year}"
-        return True, "film identity OK"
+                return False, f"year mismatch: {item_year} vs {candidate_year}", \
+                    "identity_wrong_year"
+        return True, "film identity OK", "identity_ok"
 
     # episodes: series name + SxxEyy — de SxxEyy-eis geldt ALTIED,
     # ook als de series-naam alleen compact (S.W.A.T.) herkend kan worden
@@ -98,15 +104,20 @@ def identity_gate(item_title: str, item_gp: str | None,
         missing_series = [w for w in series_words if w not in cname]
         if len(missing_series) > len(series_words) // 2:
             if not (len(compact) >= 4 and compact in cname_compact):
-                return False, f"series mismatch: {item_gp} niet in candidate"
+                return False, f"series mismatch: {item_gp} niet in candidate", \
+                    "identity_wrong_show"
     elif len(compact) >= 4 and compact not in cname_compact:
-        return False, f"series mismatch: {item_gp} niet in candidate"
+        return False, f"series mismatch: {item_gp} niet in candidate", \
+            "identity_wrong_show"
     if item_season is not None and item_episode is not None:
         se = f"s{int(item_season):02d}e{int(item_episode):02d}"
         se_loose = f"{int(item_season)}x{int(item_episode):02d}"
-        if se not in cname and se_loose not in cname:
-            return False, f"season/episode mismatch: {se} niet in candidate"
-    return True, "episode identity OK"
+        # compact-vorm dekt punctuated variants af (S04.E01, S04_E01): die
+        # normaliseren met spaties en missen anders vals-negatief
+        if se not in cname and se_loose not in cname and se not in cname_compact:
+            return False, f"season/episode mismatch: {se} niet in candidate", \
+                "identity_pack_missing_episode"
+    return True, "episode identity OK", "identity_ok"
 
 
 # ---------------------------------------------------------- upgrade policy

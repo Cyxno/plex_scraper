@@ -66,10 +66,10 @@ class MockProvider(DebridProvider):
     async def ensure_torrent(self, info_hash: str, torrent_name: str) -> ProviderTorrent:
         spec = self._spec(info_hash)
         if spec.get("validate_fails"):
-            raise NotReadyError(f"mock: torrent {info_hash} fails validation")
+            raise NotReadyError(f"mock: torrent {info_hash} not ready (validation)")
         if spec.get("validate_failures_left", 0) > 0:
             spec["validate_failures_left"] -= 1
-            raise NotReadyError(f"mock: torrent {info_hash} fails (transient)")
+            raise NotReadyError(f"mock: torrent {info_hash} not ready (transient)")
         file_id = 0
         files = spec.get("files") or {
             file_id: {"name": spec.get("file_name") or f"{torrent_name}.mkv",

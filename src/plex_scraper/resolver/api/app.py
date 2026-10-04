@@ -396,4 +396,8 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
             raise KeyError(f"no active source for {item_id}")
         return {"failed_current_source_of": item_id}
 
+    # operationele cockpit view-models (DEEL R)
+    from .ops import create_ops_routes
+    create_ops_routes(app, resolver)
+
     return app

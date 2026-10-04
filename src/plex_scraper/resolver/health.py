@@ -380,7 +380,7 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
             out["current_score"] = current.score
         best = None
         for cand, score in ranked:
-            ok, why = identity_gate(item.title, item.series,
+            ok, why, _sub = identity_gate(item.title, item.series,
                                     item.season, item.episode,
                                     cand.torrent_name, item.year)
             if not ok:
@@ -493,8 +493,24 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
         if not batch:
             return
         log.info("sweep: %d items (shadow=%s)", len(batch), self.shadow_mode)
-        repairs = upgrades = checks = shadow_switches = 0
+        repairs = upgrades = checks = shadow_switches = recoveries = 0
+        run_id = None
+        try:
+            run_id = await self.resolver.store.job_start(
+                "health_sweeper", progress_total=len(batch))
+        except Exception:
+            pass
         for item in batch:
+            if run_id is not None:
+                try:
+                    label = getattr(item, "series", None) or getattr(item, "title", "") \
+                        or item.plex_path
+                    await self.resolver.store.job_progress(
+                        run_id, processed=checks, changed=repairs,
+                        recovered=recoveries, current_item=str(label)[:80],
+                        progress_current=checks)
+                except Exception:
+                    pass
             plex_path = item.plex_path
             try:
                 # DOEL 6: playback die midden in een batch begint, breekt de
@@ -508,6 +524,14 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                                             "mid_batch": True})
                             self._pause_logged_until = time.time() + 1800.0
                         log.info("sweep afgebroken: %d actieve playback-streams", live)
+                        if run_id is not None:
+                            try:
+                                await self.resolver.store.job_finish(
+                                    run_id, "DEFERRED", reason="playback_active",
+                                    checks=checks, repairs=repairs,
+                                    recoveries=recoveries)
+                            except Exception:
+                                pass
                         return
 
                 if item.status == "NO_SOURCE":
@@ -549,6 +573,7 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                         else:
                             if await self._repair(item):
                                 repairs += 1
+                                recoveries += 1
                 elif self.upgrade_enabled:
                     shadow = await self._shadow_evaluate(item)
                     best = shadow.get("best")
@@ -570,6 +595,14 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
             await asyncio.sleep(self._interval)
         log.info("sweep done: %d checks, %d repairs, %d upgrades, "
                  "%d shadow_switches", checks, repairs, upgrades, shadow_switches)
+        if run_id is not None:
+            try:
+                await self.resolver.store.job_finish(
+                    run_id, "SUCCESS", checks=checks, repairs=repairs,
+                    upgrades=upgrades, recoveries=recoveries,
+                    shadow_switches=shadow_switches)
+            except Exception:
+                pass
 
     # ---------------------------------------------------------- run loop
     async def run(self):

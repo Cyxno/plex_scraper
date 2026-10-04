@@ -226,14 +226,14 @@ class Resolver:
             grandfathered = (previous is not None
                              and cand.info_hash == previous.info_hash)
             if not grandfathered:
-                ok, why = identity_gate(item.title, item.series,
-                                        item.season, item.episode,
-                                        cand.torrent_name, item.year)
+                ok, why, sub = identity_gate(item.title, item.series,
+                                             item.season, item.episode,
+                                             cand.torrent_name, item.year)
                 if not ok:
                     await self._evt("candidate_identity_rejected", item=item,
                                     hash=cand.info_hash, name=cand.torrent_name,
-                                    reason=why)
-                    _reject("identity_gate")
+                                    reason=why, subreason=sub)
+                    _reject(sub)                       # subreason in de trace
                     continue
                 if cand.info_hash in bad_hashes or cand.info_hash in delivery_bad:
                     _reject("bad_ttl")
@@ -476,28 +476,28 @@ class Resolver:
             url = await self._link_for(src, torrent)
             probe = self.s.validation_probe_bytes
             head = await self.provider.read_range(url, 0, probe)
+            if not head:
+                raise ProviderError("first byte probe empty")
             middle = await self.provider.read_range(
                 url, max(0, src.size // 2), min(probe, max(1, src.size - src.size // 2)))
-            if not head or not middle:
-                raise ProviderError("probe read returned no bytes")
+            if not middle:
+                raise ProviderError("range probe empty")
         except (NotReadyError, ProviderError) as exc:
+            err = str(exc)
+            # A4: probe_failed gedecomposeerd in exacte faalsoort; A5: elke
+            # soort krijgt een transient-klasse die de bad-TTL bepaalt —
+            # tijdelijke TorBox-status (niet ready / 429 / 5xx) kort, echt
+            # ongeldig (too small / geen files) direct de maximale TTL.
+            kind, ttl_class = self._classify_candidate_failure(err, exc)
             src.failure_count += 1
-            src.bad_until = self._bad_until(src.failure_count)
+            src.bad_until = self._bad_until(src.failure_count, ttl_class)
             src.state = m.SourceState.FAILED.value
             await self.store.upsert_source(src)
-            err = str(exc)
-            # transient (nog niet klaar met downloaden/cachen) vs definitief
-            # ongeldig (too small / geen files): andere reject-reden in de trace
-            if "too small" in err or "no files" in err:
-                kind = "sanity_invalid"
-            elif isinstance(exc, NotReadyError):
-                kind = "transient_not_ready"
-            else:
-                kind = "probe_failed"
             if rejects is not None:
                 rejects[kind] = rejects.get(kind, 0) + 1
             await self._evt("candidate_failed", item=item, hash=cand.info_hash,
-                  name=cand.torrent_name, error=err, reject_kind=kind,
+                  name=cand.torrent_name, error=err[:200], reject_kind=kind,
+                  ttl_class=ttl_class,
                   bad_until=src.bad_until, failure_count=src.failure_count)
             return None
 
@@ -512,7 +512,42 @@ class Resolver:
         src = await self.store.upsert_source(src)
         return src
 
-    def _bad_until(self, failure_count: int) -> float:
+    @staticmethod
+    def _classify_candidate_failure(err: str,
+                                    exc: Exception) -> tuple[str, str]:
+        """(reject_kind, ttl_class): TRANSIENT_PROVIDER/BACKEND korte TTL,
+        PERMANENT_BAD lange TTL (geneest niet), RETRYABLE_NOT_READY normaal
+        exponentieel schema."""
+        low = err.lower()
+        if "too small" in low:
+            return "file_too_small", "PERMANENT_BAD"
+        if "no files" in low:
+            return "torrent_no_files", "PERMANENT_BAD"
+        if "http 400" in low:
+            return "provider_400", "TRANSIENT_PROVIDER"
+        if "http 429" in low or "rate limit" in low:
+            return "provider_429", "TRANSIENT_PROVIDER"
+        if "http 5" in low:
+            return "provider_5xx", "TRANSIENT_PROVIDER"
+        if "not ready" in low:
+            return "torrent_not_ready", "RETRYABLE_NOT_READY"
+        if "first byte probe empty" in low:
+            return "first_byte_empty", "TRANSIENT_PROVIDER"
+        if "range probe empty" in low:
+            return "range_failed", "TRANSIENT_PROVIDER"
+        if "network error" in low or "timeout" in low:
+            return "backend_unavailable", "TRANSIENT_BACKEND"
+        if "createtorrent" in low or "requestdl" in low or "torrent_id" in low:
+            return "provider_add_failed", "TRANSIENT_PROVIDER"
+        return "unknown_probe_failure", "TRANSIENT_PROVIDER"
+
+    def _bad_until(self, failure_count: int,
+                   ttl_class: str = "TRANSIENT_PROVIDER") -> float:
+        """A5: TTL hangt af van de faal-klasse — PERMANENT_BAD direct naar
+        de maximale TTL, transients kort zodat herstelde status snel weer
+        geprobeerd wordt."""
+        if ttl_class == "PERMANENT_BAD":
+            return m.now() + self.s.cache_bad_ttl_max
         ttl = self.s.cache_bad_ttl * (2 ** (failure_count - 1))
         return m.now() + min(ttl, self.s.cache_bad_ttl_max)
 

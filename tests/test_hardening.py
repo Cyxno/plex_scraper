@@ -141,8 +141,8 @@ async def test_reject_summary_event_present(settings, scorer, got_item):
                if e["kind"] == "resolution_reject_summary"]
     assert summary, "reject-summary ontbreekt"
     rej = summary[0]["rejects"]
-    assert rej.get("identity_gate") == 1
-    assert rej.get("transient_not_ready") == 1  # validate_fails -> NotReadyError
+    assert rej.get("identity_wrong_show") == 1  # subreason i.p.v. parent
+    assert rej.get("torrent_not_ready") == 1  # validate_fails -> NotReadyError
     assert summary[0]["candidate_count"] == 2
     assert summary[0]["provider_adds"] == 1
 
@@ -168,7 +168,7 @@ async def test_transient_not_ready_vs_sanity_invalid_classified(settings, scorer
     fails = [e for e in await _events(engine, item.id)
              if e["kind"] == "candidate_failed"]
     kinds = {e["reject_kind"] for e in fails}
-    assert kinds == {"transient_not_ready", "sanity_invalid"}
+    assert kinds == {"torrent_not_ready", "file_too_small"}
     for e in fails:
         assert e["bad_until"] > 0        # temporary, met TTL
 

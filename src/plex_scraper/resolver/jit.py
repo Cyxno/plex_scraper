@@ -328,7 +328,7 @@ class JitController:
                     continue
                 if sources.get(cand.info_hash) is None and not cand.info_hash in _cached_hashes(self.resolver):
                     continue                       # alleen cached: geen add-druk tijdens Play
-                ok, _why = identity_gate(item.title, item.series, item.season,
+                ok, _why, _sub = identity_gate(item.title, item.series, item.season,
                                          item.episode, cand.torrent_name, item.year)
                 if not ok:
                     continue
@@ -513,7 +513,7 @@ class JitController:
                     continue
                 if quality_relation(cur_tier, quality_tier(cand.torrent_name)["tier"])                         not in ("same", "higher", "minor"):
                     continue
-                ok, _ = identity_gate(item.title, item.series, item.season,
+                ok, _, _sub = identity_gate(item.title, item.series, item.season,
                                       item.episode, cand.torrent_name, item.year)
                 if not ok:
                     continue

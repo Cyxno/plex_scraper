@@ -9,7 +9,7 @@ import sqlite3
 import time
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from ..common.config import Settings
 
@@ -100,12 +100,38 @@ def create_web_app(settings: Settings) -> FastAPI:
     # ------------------------------------------------------------- pages
     @app.get("/", response_class=HTMLResponse)
     async def index():
+        return HTMLResponse(_tpl("cockpit.html"))
+
+    @app.get("/legacy", response_class=HTMLResponse)
+    async def legacy_index():
         return HTMLResponse(_tpl("summary.html"))
 
     @app.get("/ui/trace/{rk}", response_class=HTMLResponse)
     async def ui_trace(rk: str):
         html = _tpl("trace.html")
         return HTMLResponse(html)
+
+    # Cockpit-API passthrough: éénzelfde origin, resolver-view-modellen
+    # (dashboard/activity/issues/jobs/trace/providers) zonder CORS-gedoe.
+    @app.get("/ops/{path:path}")
+    async def ops_proxy(path: str):
+        import httpx
+        try:
+            r = httpx.get(f"{resolver_base}/api/{path}", timeout=20.0)
+            return JSONResponse(status_code=r.status_code, content=r.json())
+        except Exception as exc:                       # resolver down
+            return JSONResponse(status_code=503,
+                                content={"error": f"resolver onbereikbaar: {exc!r}"[:200]})
+
+    @app.get("/ops-media/{item_id}/trace")
+    async def ops_trace_proxy(item_id: str):
+        import httpx
+        try:
+            r = httpx.get(f"{resolver_base}/api/media/{item_id}/trace", timeout=20.0)
+            return JSONResponse(status_code=r.status_code, content=r.json())
+        except Exception as exc:
+            return JSONResponse(status_code=503,
+                                content={"error": f"resolver onbereikbaar: {exc!r}"[:200]})
 
     # ------------------------------------------------------------- API
     @app.get("/health")
