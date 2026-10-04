@@ -615,7 +615,13 @@ class Resolver:
         # FASE 5/9: runtime delivery-monitor — gebruikt de bytes die toch al
         # voor Plex worden gelezen; geen extra provider-load
         if ctx.monitor is not None and data:
-            ctx.monitor.feed(len(data), time.monotonic() - t0)
+            # FASE 8: seek (grote offset-sprong) telt niet als stall
+            seek = (ctx.monitor.last_offset >= 0
+                    and abs(offset - ctx.monitor.last_offset) > 50 * 1048576)
+            if time.time() < ctx.monitor._pause_until:
+                seek = True
+            ctx.monitor.feed(len(data), time.monotonic() - t0, seek=seek)
+            ctx.monitor.last_offset = offset
             snap = ctx.monitor.evaluate()
             if snap["state"] != ctx.monitor.last_state_reported:
                 ctx.monitor.last_state_reported = snap["state"]

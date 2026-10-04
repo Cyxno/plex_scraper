@@ -47,6 +47,16 @@ class DeliveryMonitor:
         self.state = WARMING_UP
         self.last_state_reported = WARMING_UP
         self.last_read_wait_s = 0.0
+        # FASE 4-5: stall-tracking (bounded, in-memory)
+        self.stall_minor_s = 3.0
+        self.stall_severe_s = 5.0
+        self.stall_extreme_s = 10.0
+        self.stall_window_s = 120.0
+        self.stall_total_ms = 12000.0
+        self._stalls: deque = deque()          # (ts, wait_s) alleen ≥ minor
+        self.stall_state = "OK"
+        self.last_offset = -1
+        self._pause_until = 0.0
         self.longest_stall_s = 0.0
         self.slow_windows = 0
         self.good_windows = 0
@@ -54,11 +64,16 @@ class DeliveryMonitor:
         self.failed_over = False
 
     # -------------------------------------------------------------- feed
-    def feed(self, nbytes: int, wait_s: float) -> None:
+    def feed(self, nbytes: int, wait_s: float, seek: bool = False) -> None:
         now = self._now()
         self._events_dq.append((now, nbytes))
         self.last_read_wait_s = wait_s
         self.longest_stall_s = max(self.longest_stall_s, wait_s)
+        # FASE 8: seek/pause geen stall — gap > 10 s = pauze/reconnect
+        if seek or now < self._pause_until:
+            return
+        if wait_s >= self.stall_minor_s:
+            self._stalls.append((now, wait_s))
 
     # ------------------------------------------------------- evaluatie
     def evaluate(self) -> dict:
@@ -77,8 +92,12 @@ class DeliveryMonitor:
     # windows: verdeel de events in window_s-blokken
     def _classify(self, now: float, elapsed: float) -> dict:
         if not self._events_dq:
-            return {"state": self.state, "rolling_mbit": 0.0, "elapsed_s": round(elapsed, 1),
-                    "warming": elapsed < self.warmup_s}
+            return {"state": self.state, "stall_state": self.stall_state,
+                    "rolling_mbit": 0.0, "elapsed_s": round(elapsed, 1),
+                    "warming": elapsed < self.warmup_s, "stalls": 0,
+                    "severe_stalls": 0, "max_stall_s": 0, "total_stalled_ms": 0,
+                    "reason": "", "min_realtime": self.media_bitrate,
+                    "target": self.target_mbit}
         # rolling 15 s
         horizon = now - 15.0
         b15 = sum(b for t, b in self._events_dq if t >= horizon)
@@ -98,10 +117,39 @@ class DeliveryMonitor:
         min_realtime = self.media_bitrate
         target = self.target_mbit
 
+        # FASE 5/6: stall-window staat los van warmup — een 6s-stall in de
+        # eerste seconden is reëel bewijs (cold-read excepted via minor-grens)
+        cutoff = now - self.stall_window_s
+        while self._stalls and self._stalls[0][0] < cutoff:
+            self._stalls.popleft()
+        severe = [w for _, w in self._stalls if w >= self.stall_severe_s]
+        total_ms = int(sum(w for _, w in self._stalls) * 1000)
+        if (len(severe) >= 2 or len(self._stalls) >= 3
+                or total_ms >= self.stall_total_ms
+                or any(w >= self.stall_extreme_s for _, w in self._stalls)):
+            self.stall_state = "STALL_DEGRADED"
+        elif self._stalls:
+            self.stall_state = "STALL_WARNING"
+        else:
+            self.stall_state = "OK"
         if elapsed < self.warmup_s:
             self.state = WARMING_UP
-            return {"state": self.state, "rolling_mbit": round(rolling_mbit, 1),
-                    "elapsed_s": round(elapsed, 1), "warming": True}
+            worst = {"DEGRADED": 3, "STALL_DEGRADED": 3, "RECOVERING": 2,
+                     "MARGINAL": 1, "STALL_WARNING": 1, "HEALTHY": 0,
+                     "WARMING_UP": 0, "OK": 0}
+            final = self.state if worst.get(self.state, 0) >= worst.get(self.stall_state, 0) \
+                else self.stall_state
+            return {"state": final, "throughput_state": self.state,
+                    "stall_state": self.stall_state,
+                    "reason": ("STALL_DEGRADED" if self.stall_state == "STALL_DEGRADED"
+                               else ""),
+                    "stalls": len(self._stalls), "severe_stalls": len(severe),
+                    "max_stall_s": round(max((w for _, w in self._stalls), default=0), 2),
+                    "total_stalled_ms": total_ms,
+                    "rolling_mbit": round(rolling_mbit, 1),
+                    "elapsed_s": round(elapsed, 1), "warming": True,
+                    "min_realtime": min_realtime, "target": target,
+                    "slow_windows": under_realtime, "windows": len(wmbits)}
 
         # FASE 8: rolling evidence, geen reactie op één dip
         degraded_evidence = (
@@ -141,7 +189,31 @@ class DeliveryMonitor:
                 if rolling_mbit < min_realtime and under_realtime >= 2:
                     self.state = DEGRADED
                     self.degraded_since = self.degraded_since or now
-        return {"state": self.state, "rolling_mbit": round(rolling_mbit, 1),
+        prev_stall = self.stall_state
+        if (len(severe) >= 2 or len(self._stalls) >= 3
+                or total_ms >= self.stall_total_ms
+                or any(w >= self.stall_extreme_s for _, w in self._stalls)):
+            self.stall_state = "STALL_DEGRADED"
+        elif self._stalls:
+            self.stall_state = "STALL_WARNING"
+        else:
+            self.stall_state = "OK"
+        if prev_stall == "STALL_DEGRADED" and self.stall_state != "STALL_DEGRADED" \
+                and now - (self._stalls[-1][0] if self._stalls else 0) > self.stall_window_s / 2:
+            self.stall_state = "OK"                # FASE 22: herstel pas na rust
+        worst = {"DEGRADED": 3, "STALL_DEGRADED": 3, "RECOVERING": 2,
+                 "MARGINAL": 1, "STALL_WARNING": 1, "HEALTHY": 0,
+                 "WARMING_UP": 0, "OK": 0}
+        final = self.state if worst.get(self.state, 0) >= worst.get(self.stall_state, 0) \
+            else self.stall_state
+        return {"state": final, "throughput_state": self.state,
+                "stall_state": self.stall_state,
+                "reason": ("STALL_DEGRADED" if self.stall_state == "STALL_DEGRADED"
+                           else "THROUGHPUT_DEGRADED" if self.state == DEGRADED else ""),
+                "stalls": len(self._stalls), "severe_stalls": len(severe),
+                "max_stall_s": round(max((w for _, w in self._stalls), default=0), 2),
+                "total_stalled_ms": total_ms,
+                "rolling_mbit": round(rolling_mbit, 1),
                 "elapsed_s": round(elapsed, 1), "warming": False,
                 "min_realtime": min_realtime, "target": target,
                 "slow_windows": under_realtime, "windows": len(wmbits)}

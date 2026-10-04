@@ -124,3 +124,73 @@ def test_09_seek_gap_resets_windows():
     snap = m.evaluate()
     assert snap["state"] in (HEALTHY, WARMING_UP, MARGINAL)
     assert snap["rolling_mbit"] > 60.0
+
+
+def test_periodic_stalls_degraded_despite_high_throughput():
+    """(F16) Toy Story-patroon: 150 Mbit avg + elke 30s een 5s-stall →
+    STALL_DEGRADED terwijl throughput HEALTHY is."""
+    m, c = _mk(media=60.0, target=90.0)
+    t = 0
+    for cycle in range(4):                       # 4 × 30 s
+        for _ in range(25):                      # 25 s snelle reads
+            t += 1; c[0] = t
+            m.feed(int(150e6/8), 0.2)
+        t += 5; c[0] = t                         # 5s stall
+        m.feed(int(5e6/8), 5.0)
+    s = m.evaluate()
+    assert s["stall_state"] == "STALL_DEGRADED"
+    assert s["state"] == "STALL_DEGRADED"        # combined = worst
+    assert s["throughput_state"] in (HEALTHY, WARMING_UP)
+    assert s["severe_stalls"] >= 2
+
+
+def test_single_4s_stall_no_degrade():
+    """(F17) één 4s-stall → hooguit STALL_WARNING, geen DEGRADED."""
+    m, c = _mk(media=60.0, target=90.0)
+    _play(m, c, 5, 150.0)
+    t = c[0] + 1; c[0] = t
+    m.feed(int(10e6/8), 4.0)
+    _play(m, c, 10, 150.0)
+    s = m.evaluate()
+    assert s["stall_state"] in ("OK", "STALL_WARNING")
+    assert s["stall_state"] != "STALL_DEGRADED"
+
+
+def test_seek_and_pause_excluded_from_stalls():
+    """(F8/20-21) seek/pause veroorzaken geen stall-score."""
+    m, c = _mk(media=60.0, target=90.0)
+    for _ in range(3):
+        t = c[0] + 1; c[0] = t
+        m.feed(int(150e6/8), 6.0, seek=True)     # 6s 'stall' maar seek-context
+        t = c[0] + 1; c[0] = t
+        m.feed(int(150e6/8), 6.0, seek=True)
+    s = m.evaluate()
+    assert s["stalls"] == 0 and s["stall_state"] == "OK"
+
+
+def test_stall_window_expiry_recovery():
+    """(F22) stall-history verloopt na het window → herstel naar OK."""
+    m, c = _mk(media=60.0, target=90.0)
+    t = 0
+    for _ in range(2):
+        t += 1; c[0] = t
+        m.feed(int(5e6/8), 6.0)                  # 2 severe stalls
+    assert m.evaluate()["stall_state"] == "STALL_DEGRADED"
+    t += 200; c[0] = t                          # 200 s later: window verlopen
+    for _ in range(5):
+        t += 1; c[0] = t
+        m.feed(int(150e6/8), 0.2)
+    assert m.evaluate()["stall_state"] == "OK"
+
+
+def test_combined_worst_state():
+    """(F11) final state = worst van throughput en stall."""
+    m, c = _mk(media=60.0, target=90.0)
+    t = 0
+    for _ in range(2):
+        t += 1; c[0] = t
+        m.feed(int(5e6/8), 6.0)                  # stalls
+    t += 1; c[0] = t
+    m.feed(int(20e6/8), 0.3)                     # throughput laag
+    s = m.evaluate()
+    assert s["state"] in ("STALL_DEGRADED", "DEGRADED")
