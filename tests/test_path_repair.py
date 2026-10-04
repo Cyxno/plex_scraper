@@ -99,14 +99,14 @@ def test_series_search_key_uses_show_imdb():
 
 
 def test_series_missing_show_imdb_falls_back():
-    """FASE 12-veilig: zonder show-imdb valt de key terug op episode-imdb
-    (geen NO_SOURCE op incompleet identity); show-enrichment volgt later."""
+    """FASE 12: zonder show-imdb → key imdb None (incomplete); de
+    episode-imdb wordt NOOIT als show-id doorgegeven."""
     from plex_scraper.common.domain.models import MediaItem
     it = MediaItem(id="e", kind="episode", title="Song 2", plex_path="p.mkv",
                    series="MobLand", season=2, episode=2,
                    imdb_id="tt43338257")
     key = it.search_key()
-    assert key["imdb_id"] == "tt43338257"       # legacy fallback behouden
+    assert key["imdb_id"] is None               # episode-imdb ≠ show-imdb
 
 
 def test_series_fallback_to_episode_imdb_until_backfill():

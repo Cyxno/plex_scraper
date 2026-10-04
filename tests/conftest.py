@@ -58,6 +58,7 @@ def got_item():
     """Game of Thrones S01E01 logical item (test set #2)."""
     return {
         "kind": "episode", "title": "Winter Is Coming", "series": "Game of Thrones",
+        "show_imdb_id": "tt0944947",
         "season": 1, "episode": 1, "imdb_id": "tt0944947",
         "plex_path": "TV/Game of Thrones/Season 01/Game of Thrones - S01E01.mkv",
     }

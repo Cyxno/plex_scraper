@@ -117,7 +117,9 @@ class Resolver:
             series=payload.get("series"), season=payload.get("season"),
             episode=payload.get("episode"), year=payload.get("year"),
             imdb_id=payload.get("imdb_id"), tmdb_id=payload.get("tmdb_id"),
-            tvdb_id=payload.get("tvdb_id"), desired=payload.get("desired") or {},
+            tvdb_id=payload.get("tvdb_id"),
+            show_imdb_id=payload.get("show_imdb_id"), show_tmdb_id=payload.get("show_tmdb_id"), show_tvdb_id=payload.get("show_tvdb_id"),
+            desired=payload.get("desired") or {},
         )
         await self.store.create_item(item)
         await self._evt("item_registered", item_id=item.id, plex_path=plex_path, kind=item.kind)
@@ -175,6 +177,16 @@ class Resolver:
     async def _resolve_attempt(self, item: m.MediaItem, reason: str,
                                previous: m.Source | None,
                                started: float) -> m.Source | None:
+        # FASE 5: SEARCH_IDENTITY_INCOMPLETE — series zonder show-IMDb
+        # mogen niet met episode-IMDb zoeken; status blijft ongewijzigd
+        # (geen NO_SOURCE van identity), enrichment/backfill is de remedie
+        if item.kind == "episode" and not item.show_imdb_id:
+            await self._evt("search_identity_incomplete", item=item,
+                            reason="MISSING_SHOW_IMDB")
+            self.runtime_metrics["search_identity_incomplete"] = \
+                self.runtime_metrics.get("search_identity_incomplete", 0) + 1
+            self.metrics["resolve_latency_sum"] += time.monotonic() - started
+            return None
         candidates = await self._gather_candidates(item)
         ranked = await self._rank_candidates(item, candidates)
         item.status = m.ItemStatus.CANDIDATE_VALIDATION.value
