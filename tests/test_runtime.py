@@ -239,4 +239,4 @@ def test_patch_roundtrip_all_external_ids(tmp_path):
         store2 = Store(str(tmp_path / "s.db"))
         return await store2.get_item("i1")
     it = asyncio.run(seq())
-    assert (it.imdb_id, it.tmdb_id, it.tvdb_id) == ("tt1", "7492638", "11542639")
+    assert (it.imdb_id, int(it.tmdb_id), int(it.tvdb_id)) == ("tt1", 7492638, 11542639)  # tmdb/tvdb = int-kolommen
