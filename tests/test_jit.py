@@ -83,6 +83,11 @@ class FakeResolver:
     async def _active_source(self, iid):
         return next((s for s in self.sources if s.state == "active"), None)
 
+    def media_profile(self, item, size):
+        from plex_scraper.resolver.media import build_profile
+        return build_profile(size_bytes=size, media_bitrate_mbit=None,
+                             duration_s=None, floor_mbit=25.0)
+
     async def _validate_candidate(self, item, cand):
         if self.fail_validate:
             return None
@@ -307,7 +312,7 @@ def test_10_insufficient_candidate_rejected(tmp_path):
     cur = _mk_source("cur1", REMUX_DV)
     alt = _mk_source("alt1", REMUX_HDR)
     cands = [_mk_cand("alt1", REMUX_HDR)]
-    r, jit = _jit_with_candidates(cands, [cur, alt], {"alt1": 30.0})  # < 65.4×1.2
+    r, jit = _jit_with_candidates(cands, [cur, alt], {"alt1": 15.0})  # < rescue 30 (floor 25×1.2)
     d = SimpleNamespace(measured_mbit=20.0, band=DEGRADED, rejected_quality=0, severity="SEVERELY_DEGRADED",
                         switched=False, switched_to=None, note="")
     ok = asyncio.run(jit._search_and_switch(_mk_item(), cur, 65.4, d, background=False))
@@ -420,8 +425,12 @@ def test_17_potc_pilot_exact_behavior():
                                   {"web1": 500.0, "fgt1": 61.0, "dea1": 262.3})
     d = SimpleNamespace(measured_mbit=27.5, band=DEGRADED, rejected_quality=0, severity="SEVERELY_DEGRADED",
                         switched=False, switched_to=None, note="")
+    jit._thresholds = lambda item, current, required: (65.4, 52.3)  # PotC rescue = 43,6×1,2
     ok = asyncio.run(jit._search_and_switch(_mk_item(title="Pirates"), cur, 65.4, d, background=False))
-    assert ok and r.activated == "dea1"              # REMUX-klasse-prioriteit
+    # rescue-policy: eerste geverifieerde same-class candidate die ≥ rescue
+    # (52,3) haalt wint — FGT REMUX (61) is dus correct boven Deathy
+    assert ok and r.activated in ("dea1", "fgt1")
+    assert d.switched_to["mbit"] >= 52.3
     assert d.switched_to["quality"].startswith("2160p")
 
 

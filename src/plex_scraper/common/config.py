@@ -112,6 +112,8 @@ class Settings:
     jit_reconnect_on_failover: bool = True
     jit_probe_parallel: int = 2
     jit_confirm_cached_fast: bool = True
+    jit_rescue_margin: float = 1.2
+    jit_startup_first_byte_s: float = 8.0
     tautulli_url: str = ""
     tautulli_apikey: str = ""
 
@@ -211,6 +213,10 @@ class Settings:
             jit_probe_parallel=_int("JIT_PROBE_PARALLEL", cls.jit_probe_parallel),
             jit_confirm_cached_fast=_bool(
                 "JIT_CONFIRM_CACHED_FAST", cls.jit_confirm_cached_fast),
+            jit_rescue_margin=float(
+                os.environ.get("JIT_RESCUE_MARGIN", cls.jit_rescue_margin)),
+            jit_startup_first_byte_s=float(
+                os.environ.get("JIT_STARTUP_FIRST_BYTE_S", cls.jit_startup_first_byte_s)),
             tautulli_url=os.environ.get("TAUTULLI_URL", cls.tautulli_url),
             tautulli_apikey=os.environ.get("TAUTULLI_APIKEY", cls.tautulli_apikey),
             torrent_ready_max_polls=_int("TORBOX_MAX_POLLS", cls.torrent_ready_max_polls),

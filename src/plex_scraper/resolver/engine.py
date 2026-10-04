@@ -85,6 +85,7 @@ class Resolver:
             allow_quality_downgrade=getattr(settings, "jit_allow_quality_downgrade", False),
             delivery_bad_ttl_s=getattr(settings, "jit_delivery_bad_ttl_s", 3600.0),
             probe_parallel=getattr(settings, "jit_probe_parallel", 2),
+            rescue_margin=getattr(settings, "jit_rescue_margin", 1.2),
             confirm_cached_fast=getattr(settings, "jit_confirm_cached_fast", True),
         ))
         # FASE 10/19: runtime-failover administratie (switch-budget per item)
@@ -564,6 +565,14 @@ class Resolver:
             self.metrics.setdefault("active_delivery_monitors", 0)
             self.metrics["active_delivery_monitors"] += 1
         self.sessions[session.handle] = ctx
+        # DEEL B: startup-watchdog — 00:00-hang mag niet eeuwig duren
+        ctx.startup = None
+        if is_playback:
+            ctx.startup = {"state": "BUFFERING_STARTUP",
+                           "opened_at": time.time(), "first_byte_at": None,
+                           "bytes": 0,
+                           "deadline_s": self.s.jit_startup_first_byte_s}
+            asyncio.create_task(self._startup_watchdog(ctx, item, required))
         await self._evt("session_opened", item_id=item_id, handle=session.handle,
               generation=source.generation, size=source.size,
               read_mode="2way" if two_way else "single",
@@ -607,6 +616,20 @@ class Resolver:
         t0 = time.monotonic()
         data = await ctx.reader.read(offset, length)
         ctx.last_read_at = time.time()
+        if getattr(ctx, "startup", None) and data:
+            su = ctx.startup
+            if su.get("first_byte_at") is None:
+                su["first_byte_at"] = time.time()
+                self.runtime_metrics["startup_time_to_first_byte_max"] = round(
+                    su["first_byte_at"] - su["opened_at"], 2)
+                asyncio.create_task(self._evt("startup_first_byte",
+                                              item_id=ctx.session.media_item_id,
+                                              ttfb_s=su["first_byte_at"] - su["opened_at"]))
+            su["bytes"] += len(data)
+            if su["bytes"] >= 4 * 1048576 and su["state"] != "STARTED":
+                su["state"] = "STARTED"
+                asyncio.create_task(self._evt("startup_started",
+                                              item_id=ctx.session.media_item_id))
         self.metrics["reads"] += 1
         self.metrics["read_bytes"] += len(data)
         self.metrics["request_count"] += 1
@@ -642,6 +665,54 @@ class Resolver:
                     t_detect)
                 asyncio.create_task(self._runtime_failover(ctx, snap))
         return data
+
+    async def _startup_watchdog(self, ctx, item: m.MediaItem, required: float) -> None:
+        """DEEL B: 00:00-hang — geen first byte / geen progress binnen de
+        deadline → STARTUP_FAILED → rescue-search + reconnect."""
+        try:
+            while True:
+                await asyncio.sleep(2.0)
+                su = getattr(ctx, "startup", None)
+                if su is None or su["state"] in ("STARTED", "STARTUP_FAILED"):
+                    return
+                elapsed = time.time() - su["opened_at"]
+                has_first = su.get("first_byte_at") is not None
+                if not has_first and elapsed >= su["deadline_s"]:
+                    reason = "NO_FIRST_BYTE"
+                elif (has_first and elapsed >= su["opened_at"] + su["deadline_s"] * 2
+                      and su["bytes"] < 1048576):
+                    reason = "ZERO_PROGRESS"
+                else:
+                    continue
+                su["state"] = "STARTUP_FAILED"
+                self.runtime_metrics["startup_failures"] += 1
+                await self._evt("startup_failed", item=item, reason=reason,
+                                elapsed_s=round(elapsed, 1))
+                if not self._failover_budget_ok(item.id):
+                    return
+                self.runtime_metrics["runtime_failover_searches"] += 1
+                decision = SimpleNamespace(
+                    measured_mbit=0.0, band="DEGRADED",
+                    severity="STARTUP_FAILED", rejected_quality=0,
+                    switched=False, switched_to=None, note="")
+                try:
+                    source = await self._active_source(item.id)
+                    ok = await self.jit._search_and_switch(
+                        item, source, required, decision, background=False)
+                    if ok:
+                        self.runtime_metrics["startup_failover_success"] += 1
+                        await self._evt("startup_reconnect", item=item)
+                        if getattr(self.s, "jit_reconnect_on_failover", True):
+                            for hdl, other in list(self.sessions.items()):
+                                if other.session.media_item_id == item.id:
+                                    await self.release(hdl)
+                except Exception as exc:                # noqa: BLE001
+                    self.runtime_metrics["runtime_failover_failed"] += 1
+                    await self._evt("startup_failover_failed", item=item,
+                                    error=repr(exc)[:120])
+                return
+        except asyncio.CancelledError:
+            pass
 
     def _failover_budget_ok(self, item_id: str) -> bool:
         """FASE 19: max N runtime-failovers per item per budgetvenster."""

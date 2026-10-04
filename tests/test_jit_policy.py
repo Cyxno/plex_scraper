@@ -16,6 +16,12 @@ from test_jit import (                                                    # noqa
     _jit_with_candidates, _mk_source, _mk_cand, _mk_item,
     REMUX_DV, REMUX_HDR, WEBDL)
 
+
+def _media_profile(item, size):
+    from plex_scraper.resolver.media import build_profile
+    return build_profile(size_bytes=size, media_bitrate_mbit=None,
+                         duration_s=None, floor_mbit=25.0)
+
 GB = 10**9
 
 
@@ -87,9 +93,10 @@ def test_05_severe_switch_70_over_30():
 def test_06_candidate_below_required_no_switch():
     """(6) candidate 60 / required 65 → NO SWITCH (ook bij severe current)."""
     alt = ("alt1", REMUX_HDR)
-    r, jit, cur = _potc_setup({"alt1": 60.0}, extra_cands=[alt])
+    r, jit, cur = _potc_setup({"alt1": 40.0}, extra_cands=[alt])
+    jit._thresholds = lambda item, current, required: (required, 52.3)
     d = _decision(10.0)
-    ok = asyncio.run(jit._search_and_switch(_mk_item(), cur, 65.0, d, background=False))
+    ok = asyncio.run(jit._search_and_switch(_mk_item(title="Pirates"), cur, 65.0, d, background=False))
     assert ok is False and r.activated is None
 
 
@@ -101,6 +108,7 @@ def test_07_same_class_70_beats_lower_quality_150():
     cands = [_mk_cand("web1", WEBDL), _mk_cand("alt1", REMUX_HDR)]
     r, jit = _jit_with_candidates(cands, [cur, webdl, alt],
                                   {"web1": 150.0, "alt1": 70.0})
+    jit._thresholds = lambda item, current, required: (required, 52.3)
     d = _decision(30.0)
     ok = asyncio.run(jit._search_and_switch(_mk_item(), cur, 65.0, d, background=False))
     assert ok is True and r.activated == "alt1"
@@ -266,3 +274,41 @@ def test_low_bitrate_normal_risk_still_fast_path():
     jit._probe = probe
     d = asyncio.run(jit.preflight_async(item, _mk_source("h1", REMUX_DV), 37.5))
     assert probed["n"] == 0 and d.band == FAST
+
+
+def test_rescue_threshold_math():
+    """(32-1/2) ideal = bitrate×1.5 · rescue = bitrate×1.2."""
+    from plex_scraper.resolver.media import build_profile
+    prof = build_profile(size_bytes=None, media_bitrate_mbit=69.7,
+                         duration_s=None, floor_mbit=25.0)
+    assert round(prof.required_mbit(1.5), 1) == 104.6
+    assert round(prof.bitrate_mbit * 1.2, 1) == 83.6
+
+
+def test_ts4_rescue_switch():
+    """(32-7) current 57-67+stalls / candidate 91,8 / rescue 83,6 → SWITCH."""
+    cur = _mk_source("cur1", REMUX_DV)
+    alt = _mk_source("alt1", REMUX_HDR)
+    cands = [_mk_cand("alt1", REMUX_HDR)]
+    r, jit = _jit_with_candidates(cands, [cur, alt], {"alt1": 91.8})
+    jit._thresholds = lambda item, current, required: (required, 83.6)
+    jit._rescue_mbit = 83.6
+    d = SimpleNamespace(measured_mbit=60.0, band=DEGRADED, rejected_quality=0,
+                        severity="SEVERELY_DEGRADED", switched=False,
+                        switched_to=None, note="")
+    ok = asyncio.run(jit._search_and_switch(_mk_item(), cur, 104.6, d, background=False))
+    assert ok is True and r.activated == "alt1"
+    assert d.switched_to["mbit"] == 91.8
+
+
+def test_healthy_current_no_rescue_switch():
+    """(32-5) gezonde current + alleen rescue-waardige kandidaat → geen switch."""
+    cur = _mk_source("cur1", REMUX_DV)
+    alt = _mk_source("alt1", REMUX_HDR)
+    cands = [_mk_cand("alt1", REMUX_HDR)]
+    r, jit = _jit_with_candidates(cands, [cur, alt], {"alt1": 91.8})
+    d = SimpleNamespace(measured_mbit=60.0, band=DEGRADED, rejected_quality=0,
+                        severity="MARGINAL", switched=False, switched_to=None, note="")
+    jit._thresholds = lambda item, current, required: (required, 83.6)
+    ok = asyncio.run(jit._search_and_switch(_mk_item(), cur, 104.6, d, background=False))
+    assert ok is False and r.activated is None

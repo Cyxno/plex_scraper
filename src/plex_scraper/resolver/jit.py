@@ -103,6 +103,7 @@ class JitDecision:
     ttfb_s: float
     required_mbit: float
     severity: str = ""              # FAST | MARGINAL | SEVERELY_DEGRADED
+    rescue_mbit: float = 0.0        # DEEL A: media_bitrate × rescue_margin
     switched: bool = False
     switched_to: dict | None = None
     searched: bool = False
@@ -126,6 +127,7 @@ class JitConfig:
     fast_cache_s: float = 180.0          # FASE 3: kort — FAST is optimalisatie, geen garantie
     degraded_cache_s: float = 600.0
     probe_parallel: int = 2              # FASE 16: bounded parallel top-2
+    rescue_margin: float = 1.2           # DEEL A: rescue-drempel
     confirm_cached_fast: bool = True
     hot_spare: bool = True               # FASE 18: playback-scoped link-prewarm
     delivery_bad_ttl_s: float = 3600.0      # FASE 13
@@ -298,6 +300,12 @@ class JitController:
             await self.resolver._evt("jit_candidate_search", item=item,
                                      required_mbit=round(required_mbit, 1),
                                      current_mbit=decision.measured_mbit)
+            ideal_mbit, self._rescue_mbit = self._thresholds(
+                item, current, required_mbit)
+            self._rescue_mode = decision.severity in (
+                "SEVERELY_DEGRADED", "STARTUP_FAILED")
+            decision.required_mbit = round(required_mbit, 1)
+            decision.rescue_mbit = round(self._rescue_mbit, 1)
             cur_tier = quality_tier(current.torrent_name)["tier"]
             candidates = await self.resolver._gather_candidates(item)
             ranked = await self.resolver._rank_candidates(item, candidates)
@@ -394,8 +402,14 @@ class JitController:
             # tweede candidate-marge (geen required × fast_ratio) bovenop.
             probed.sort(key=lambda t: t[0], reverse=True)
             best_mbit, best_cand, best_probe = probed[0]
-            if not self._candidate_sufficient(best_mbit, decision.measured_mbit,
-                                              required_mbit):
+            verdict = self._candidate_verdict(best_mbit, decision.measured_mbit,
+                                              ideal_mbit, self._rescue_mbit,
+                                              rescue_ok=self._rescue_mode)
+            if verdict == "ACCEPTABLE_RESCUE":
+                await self.resolver._evt("candidate_rescue_acceptable", item=item,
+                                         mbit=best_mbit, rescue_mbit=round(self._rescue_mbit, 1),
+                                         ideal_mbit=round(ideal_mbit, 1))
+            if verdict == "INSUFFICIENT":
                 self.metrics["jit_no_equivalent_source"] += 1
                 await self.resolver._evt("jit_no_equivalent_source", item=item,
                                          best_mbit=best_mbit,
@@ -444,12 +458,38 @@ class JitController:
                                  hash=src_info_hash(src), mbit=cand_mbit)
         return True
 
+    def _thresholds(self, item, current, required: float) -> tuple[float, float]:
+        """(DEEL A) ideal_target = required (= bitrate × playback_margin);
+        rescue_threshold = media_bitrate × rescue_margin (1,2×)."""
+        mp = getattr(self.resolver, "media_profile", None)
+        if mp is not None:
+            profile = mp(item, int(getattr(current, "size", 0) or 0))
+            rescue = profile.bitrate_mbit * self.cfg.rescue_margin
+        else:
+            rescue = required * (self.cfg.rescue_margin / 1.5)
+        return required, rescue
+
+    def _candidate_verdict(self, cand_mbit: float, current_mbit: float,
+                           ideal: float, rescue: float,
+                           rescue_ok: bool = False) -> str:
+        """IDEAL / ACCEPTABLE_RESCUE / INSUFFICIENT. De rescue-drempel geldt
+        ALLÉÉN bij echte rescue-situaties (SEVERELY_DEGRADED/STARTUP_FAILED);
+        bij MARGINAL/gezonde current blijft de ideal-target leidend."""
+        gain_ok = cand_mbit / max(current_mbit, 0.1) >= self.cfg.min_gain
+        if cand_mbit >= ideal and gain_ok:
+            return "IDEAL"
+        if rescue_ok and cand_mbit >= rescue and gain_ok:
+            return "ACCEPTABLE_RESCUE"
+        return "INSUFFICIENT"
+
     def _candidate_sufficient(self, cand_mbit: float, current_mbit: float,
                               required: float) -> bool:
-        """POLICY-PASS basisregel: candidate ≥ required (dé playback-drempel)
-        én duidelijke verbetering t.o.v. current (× min_gain, hysteresis).
-        Geen tweede veiligheidsmarge boven required."""
-        return (cand_mbit >= required
+        """Rescue-bewust: bij SEVERELY_DEGRADED/STARTUP_FAILED current geldt
+        de rescue-drempel (media_bitrate × 1,2) i.p.v. de ideal-target —
+        geen gestapelde marges; hysteresis (× min_gain) blijft."""
+        threshold = self._rescue_mbit if getattr(self, "_rescue_mode", False) \
+            else required
+        return (cand_mbit >= threshold
                 and cand_mbit / max(current_mbit, 0.1) >= self.cfg.min_gain)
 
     async def warm_spare(self, item, current) -> None:
