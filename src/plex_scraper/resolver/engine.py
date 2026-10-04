@@ -527,6 +527,7 @@ class Resolver:
         if two_way != 0 and required > 0:
             jit_decision = await self.jit.preflight_async(item, source, required)
             jit_note = jit_decision.note
+        is_playback = two_way is not 0               # None/True = echte play
         if two_way is None:
             two_way = self.two_way_for(item, required)
         reader = AdaptiveRangeReader(self, source.id, source.size,
@@ -553,7 +554,7 @@ class Resolver:
         ctx.bitrate_confidence = profile.confidence
         ctx.jit_decision = jit_decision
         # FASE 5: runtime delivery-monitor op echte playback (niet background)
-        if two_way != 0:
+        if is_playback:
             ctx.monitor = DeliveryMonitor(
                 item.plex_path,
                 media_bitrate=profile.bitrate_mbit,
