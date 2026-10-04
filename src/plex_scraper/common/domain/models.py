@@ -71,9 +71,12 @@ class MediaItem:
     def search_key(self) -> dict:
         """What scrapers need to find this item."""
         if self.kind == "episode":
+            # show_imdb_id is de provider-key zodra aanwezig; zolang show-
+            # enrichment ontbreekt valt de key terug op episode-imdb tot
+            # backfill voltooid is (NO_SOURCE op incompleet identity verboden)
             return {
                 "kind": "episode",
-                "imdb_id": self.imdb_id,
+                "imdb_id": self.show_imdb_id or self.imdb_id,
                 "series": self.series,
                 "season": self.season,
                 "episode": self.episode,
