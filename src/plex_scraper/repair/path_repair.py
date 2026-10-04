@@ -79,3 +79,19 @@ def episode_match_ok(cand_name: str, season: int, episode: int) -> bool:
             return False
         return int(m2.group(1)) == season and int(m2.group(2)) == episode
     return int(m.group(1)) == season and int(m.group(2)) == episode
+
+
+def extract_episode_identity(ep_row: dict, season_row: dict,
+                             show_row: dict) -> dict | None:
+    """FASE 1: Plex hierarchy → identity. episode → parent(season) →
+    parent(show). Geen filename-afleiding."""
+    if not (ep_row and season_row and show_row):
+        return None
+    season_no = season_row.get("index")
+    ep_no = ep_row.get("index")
+    if season_no is None or ep_no is None or not show_row.get("title"):
+        return None
+    return {"kind": "episode", "series": show_row["title"],
+            "season": int(season_no), "episode": int(ep_no),
+            "episode_title": ep_row.get("title"),
+            "year": show_row.get("year")}

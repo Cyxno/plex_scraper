@@ -62,3 +62,20 @@ def test_28_correct_episode_and_season_pack():
 def test_19_new_route_never_legacy():
     for _ in range(50):
         assert new_resolver_path().startswith(".ids/")
+
+
+def test_hierarchy_extraction():
+    from plex_scraper.repair.path_repair import extract_episode_identity
+    ep = {"title": "Song 2", "index": 2, "parent_id": 10}
+    season = {"title": "Season 2", "index": 2, "parent_id": 20}
+    show = {"title": "MobLand", "year": 2025}
+    ident = extract_episode_identity(ep, season, show)
+    assert ident == {"kind": "episode", "series": "MobLand", "season": 2,
+                     "episode": 2, "episode_title": "Song 2", "year": 2025}
+
+
+def test_hierarchy_incomplete_no_identity():
+    from plex_scraper.repair.path_repair import extract_episode_identity
+    assert extract_episode_identity(None, {"index": 2}, {"title": "X"}) is None
+    assert extract_episode_identity({"index": None}, {"index": 2},
+                                    {"title": "X"}) is None
