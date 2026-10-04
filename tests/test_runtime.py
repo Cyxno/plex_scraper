@@ -194,3 +194,49 @@ def test_combined_worst_state():
     m.feed(int(20e6/8), 0.3)                     # throughput laag
     s = m.evaluate()
     assert s["state"] in ("STALL_DEGRADED", "DEGRADED")
+
+
+def test_patch_persists_despite_stale_runtime_writer(tmp_path):
+    """FASE 1-repro: stale runtime-writer mag external IDs/identity nooit
+    overschrijven (generieke persistence-semantiek)."""
+    from plex_scraper.common.domain.models import MediaItem
+    from plex_scraper.resolver.store import Store
+    store = Store(str(tmp_path / "s.db"))
+
+    async def seq():
+        it = MediaItem(id="i1", kind="movie", title="MobLand", plex_path="p.mkv",
+                       series="MobLand", season=2, episode=2)
+        await store.create_item(it)
+        # stale copy A (vóór enrich)
+        stale = await store.get_item("i1")
+        # "PATCH": enrichment schrijft external IDs (full-row, verse copy)
+        fresh = await store.get_item("i1")
+        fresh.imdb_id = "tt43338257"
+        await store.update_item(fresh)
+        # stale runtime-writer (resolve/open-pad) schrijft daarna
+        stale.status = "RESOLVING"
+        await store.update_runtime(stale)
+        back = await store.get_item("i1")
+        return back
+    it = asyncio.run(seq())
+    assert it.imdb_id == "tt43338257"            # niet overschreven
+    assert it.series == "MobLand"
+    assert it.status == "RESOLVING"              # runtime-veld wél bijgewerkt
+
+
+def test_patch_roundtrip_all_external_ids(tmp_path):
+    from plex_scraper.common.domain.models import MediaItem
+    from plex_scraper.resolver.store import Store
+    store = Store(str(tmp_path / "s.db"))
+
+    async def seq():
+        it = MediaItem(id="i1", kind="movie", title="X", plex_path="x.mkv")
+        await store.create_item(it)
+        fresh = await store.get_item("i1")
+        fresh.imdb_id, fresh.tmdb_id, fresh.tvdb_id = "tt1", "7492638", "11542639"
+        await store.update_item(fresh)
+        # tweede store-instantie = onafhankelijke read (geen in-memory echo)
+        store2 = Store(str(tmp_path / "s.db"))
+        return await store2.get_item("i1")
+    it = asyncio.run(seq())
+    assert (it.imdb_id, it.tmdb_id, it.tvdb_id) == ("tt1", "7492638", "11542639")

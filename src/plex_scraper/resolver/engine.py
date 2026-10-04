@@ -148,7 +148,7 @@ class Resolver:
         if item is None:
             return None
         item.desired = desired
-        await self.store.update_item(item)
+        await self.store.update_runtime(item)
         return item
 
     # ------------------------------------------------------ state machine
@@ -162,7 +162,7 @@ class Resolver:
         self.metrics["resolutions"] += 1
         previous = await self._active_source(item.id)
         item.status = m.ItemStatus.RESOLVING.value
-        await self.store.update_item(item)
+        await self.store.update_runtime(item)
         try:
             return await self._resolve_attempt(item, reason, previous, started)
         except Exception as exc:
@@ -178,7 +178,7 @@ class Resolver:
         candidates = await self._gather_candidates(item)
         ranked = await self._rank_candidates(item, candidates)
         item.status = m.ItemStatus.CANDIDATE_VALIDATION.value
-        await self.store.update_item(item)
+        await self.store.update_runtime(item)
 
         await self._evt("resolution_started", item=item, reason=reason,
               candidate_count=len(candidates), ranked_count=len(ranked),
@@ -255,7 +255,7 @@ class Resolver:
         # behouden we hem en blijft het item READY (alleen event/history).
         if previous is not None and await self._probe_readable(previous):
             item.status = m.ItemStatus.READY.value
-            await self.store.update_item(item)
+            await self.store.update_runtime(item)
             self.metrics["resolve_latency_sum"] += time.monotonic() - started
             await self._evt("repair_kept_current", item=item, reason=reason,
                   hash=previous.info_hash,
@@ -265,7 +265,7 @@ class Resolver:
             return previous
 
         item.status = m.ItemStatus.NO_SOURCE.value
-        await self.store.update_item(item)
+        await self.store.update_runtime(item)
         await self._evt("resolution_failed", item=item, reason=reason,
               candidate_count=len(candidates), fallback_count=fallback_count,
               resolution_latency=round(time.monotonic() - started, 3))
@@ -302,7 +302,7 @@ class Resolver:
             previous = await self._active_source(item.id)
             item.status = (m.ItemStatus.READY.value if previous is not None
                            else m.ItemStatus.NO_SOURCE.value)
-            await self.store.update_item(item)
+            await self.store.update_runtime(item)
             await self._evt("resolution_crashed", item=item, reason=reason,
                   error=repr(exc)[:160], reconciled_status=item.status)
         except Exception as inner:                       # noqa: BLE001
@@ -472,7 +472,7 @@ class Resolver:
         await self.store.retire_active(item.id, except_source_id=source.id)
         await self.store.update_source(source)
         item.status = m.ItemStatus.READY.value
-        await self.store.update_item(item)
+        await self.store.update_runtime(item)
 
     async def _active_source(self, item_id: str) -> m.Source | None:
         for src in await self.store.list_sources(item_id):
@@ -512,7 +512,7 @@ class Resolver:
             item.status = (m.ItemStatus.SOURCE_FAILED.value
                            if source is not None else item.status)
             if item.status == m.ItemStatus.SOURCE_FAILED.value:
-                await self.store.update_item(item)
+                await self.store.update_runtime(item)
             source = await self.resolve_item(
                 item, reason="open_needs_source")
         if source is None:
@@ -598,7 +598,7 @@ class Resolver:
                 if dur_ms and (not item.year or str(item.year) in str(row.get("year") or "")):
                     item.duration_s = dur_ms / 1000.0
                     item.media_bitrate_mbit = None
-                    await self.store.update_item(item)
+                    await self.store.update_runtime(item)
                     await self._evt("media_duration_learned", item=item,
                                     duration_s=item.duration_s)
                     return
@@ -824,7 +824,7 @@ class Resolver:
         item = await self.store.get_item(src.media_item_id)
         if item is not None:
             item.status = m.ItemStatus.SOURCE_FAILED.value
-            await self.store.update_item(item)
+            await self.store.update_runtime(item)
             await self._evt("source_failed", item=item, source_id=src.id,
                   generation=src.generation, reason=reason,
                   reason_for_source_switch=reason, failure_count=src.failure_count)

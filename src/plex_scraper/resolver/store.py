@@ -131,17 +131,31 @@ class Store:
         await self.run(fn)
         return item
 
-    async def update_item(self, item: m.MediaItem) -> None:
+    _ITEM_COLS = ("status", "generation", "desired", "updated_at", "duration_s",
+                  "media_bitrate_mbit", "imdb_id", "tmdb_id", "tvdb_id")
+
+    async def update_item(self, item: m.MediaItem, fields: set[str] | None = None) -> None:
+        """FASE-persistence: zonder `fields` wordt de volledige row geschreven
+        (registration/enrichment). State-writers (resolve/open/activate/
+        sweeper) geven expliciet hun eigenaarsvelden mee zodat een stale
+        object NOOIT identity of external IDs kan overschrijven."""
         item.updated_at = m.now()
+        cols = tuple(self._ITEM_COLS) if not fields else tuple(
+            f for f in self._ITEM_COLS if f in fields)
+        vals = [getattr(item, c) if c != "desired" else json.dumps(item.desired)
+                for c in cols]
 
         def fn(c: sqlite3.Connection):
             c.execute(
-                "UPDATE media_items SET status=?, generation=?, desired=?, updated_at=?, "
-                "duration_s=?, media_bitrate_mbit=?, imdb_id=?, tmdb_id=?, tvdb_id=? WHERE id=?",
-                (item.status, item.generation, json.dumps(item.desired), item.updated_at,
-                 item.duration_s, item.media_bitrate_mbit,
-                 item.imdb_id, item.tmdb_id, item.tvdb_id, item.id))
+                f"UPDATE media_items SET {', '.join(f'{c_}=?' for c_ in cols)} "
+                "WHERE id=?", (*vals, item.id))
         await self.run(fn)
+
+    RUNTIME_FIELDS = frozenset({"status", "generation", "desired", "updated_at"})
+
+    async def update_runtime(self, item: m.MediaItem) -> None:
+        """Partial-field update: alleen runtime-owned velden."""
+        await self.update_item(item, fields=set(self.RUNTIME_FIELDS))
 
     async def reconcile_stale(self, timeout_s: float) -> list[dict]:
         """DOEL 3-watchdog: items die in een tussenstaat (RESOLVING /
