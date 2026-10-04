@@ -79,3 +79,10 @@ def test_hierarchy_incomplete_no_identity():
     assert extract_episode_identity(None, {"index": 2}, {"title": "X"}) is None
     assert extract_episode_identity({"index": None}, {"index": 2},
                                     {"title": "X"}) is None
+
+
+def test_parse_guids():
+    from plex_scraper.repair.path_repair import parse_guids
+    g = parse_guids(["imdb://tt43338257", "tmdb://7492638", "tvdb://11542639"])
+    assert g == {"imdb_id": "tt43338257", "tmdb_id": "7492638", "tvdb_id": "11542639"}
+    assert parse_guids([])["imdb_id"] is None

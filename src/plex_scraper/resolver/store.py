@@ -137,9 +137,10 @@ class Store:
         def fn(c: sqlite3.Connection):
             c.execute(
                 "UPDATE media_items SET status=?, generation=?, desired=?, updated_at=?, "
-                "duration_s=?, media_bitrate_mbit=? WHERE id=?",
+                "duration_s=?, media_bitrate_mbit=?, imdb_id=?, tmdb_id=?, tvdb_id=? WHERE id=?",
                 (item.status, item.generation, json.dumps(item.desired), item.updated_at,
-                 item.duration_s, item.media_bitrate_mbit, item.id))
+                 item.duration_s, item.media_bitrate_mbit,
+                 item.imdb_id, item.tmdb_id, item.tvdb_id, item.id))
         await self.run(fn)
 
     async def reconcile_stale(self, timeout_s: float) -> list[dict]:

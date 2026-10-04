@@ -95,3 +95,16 @@ def extract_episode_identity(ep_row: dict, season_row: dict,
             "season": int(season_no), "episode": int(ep_no),
             "episode_title": ep_row.get("title"),
             "year": show_row.get("year")}
+
+
+def parse_guids(guids: list[str]) -> dict:
+    """FASE 2: imdb://tt… / tmdb://… / tvdb://… normaliseren."""
+    out = {"imdb_id": None, "tmdb_id": None, "tvdb_id": None}
+    for g in guids or []:
+        if g.startswith("imdb://"):
+            out["imdb_id"] = g[7:]
+        elif g.startswith("tmdb://"):
+            out["tmdb_id"] = g[7:]
+        elif g.startswith("tvdb://"):
+            out["tvdb_id"] = g[7:]
+    return out
