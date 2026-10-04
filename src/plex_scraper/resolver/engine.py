@@ -19,6 +19,7 @@ from plex_scraper.common.config import Settings
 from plex_scraper.common.domain import models as m
 from plex_scraper.common.log import event
 from plex_scraper.scraper.providers.base import DebridProvider, NotReadyError, ProviderError
+from plex_scraper.scraper.providers.torbox import VIDEO_EXTS
 from plex_scraper.common.scoring.release_parser import parse_release
 from plex_scraper.scraper.scrapers.base import Scraper, TorrentCandidate
 from plex_scraper.resolver.selfheal import identity_gate
@@ -211,6 +212,11 @@ class Resolver:
 
         fallback_count = 0
         provider_adds = 0
+        rejects: dict[str, int] = {}
+
+        def _reject(kind: str) -> None:
+            rejects[kind] = rejects.get(kind, 0) + 1
+
         for cand, _score in ranked:
             # DOEL 2: de huidige actieve bron is grandfathered — hij is
             # historisch al identiteits-geverifieerd en mag bij re-resolve
@@ -227,8 +233,10 @@ class Resolver:
                     await self._evt("candidate_identity_rejected", item=item,
                                     hash=cand.info_hash, name=cand.torrent_name,
                                     reason=why)
+                    _reject("identity_gate")
                     continue
                 if cand.info_hash in bad_hashes or cand.info_hash in delivery_bad:
+                    _reject("bad_ttl")
                     continue
             elif cand.info_hash in bad_hashes or cand.info_hash in delivery_bad:
                 # grandfathered probeert ondanks bad-marking opnieuw: de
@@ -240,10 +248,24 @@ class Resolver:
                     await self._evt("resolution_skip_uncached", item=item,
                                     hash=cand.info_hash,
                                     reason="provider_add_budget_exhausted")
+                    _reject("budget_exhausted")
+                    continue
+                # pre-add gate: een candidate waarvan de volledige torrent al
+                # te klein is voor het mediatype kan nooit een geldig bestand
+                # bevatten — kost dan ook geen provider-add (60/h account-cap).
+                min_bytes = self.s.min_media_movie_mb if item.kind == "movie" \
+                    else self.s.min_media_episode_mb
+                if cand.size and cand.size < (min_bytes << 20):
+                    await self._evt("candidate_pre_gate_rejected", item=item,
+                                    hash=cand.info_hash, name=cand.torrent_name,
+                                    reason=f"torrent size "
+                                           f"{cand.size / (1 << 20):.0f}MB below "
+                                           f"min for {item.kind}")
+                    _reject("pre_gate_size")
                     continue
                 provider_adds += 1
             t0 = time.monotonic()
-            source = await self._validate_candidate(item, cand)
+            source = await self._validate_candidate(item, cand, rejects=rejects)
             validation_latency = time.monotonic() - t0
             if source is None:
                 fallback_count += 1
@@ -281,6 +303,12 @@ class Resolver:
         await self._evt("resolution_failed", item=item, reason=reason,
               candidate_count=len(candidates), fallback_count=fallback_count,
               resolution_latency=round(time.monotonic() - started, 3))
+        # reproduceerbare reject-trace: één event met de afbreuk-redenen per
+        # resolve-run (candidate -> reden staat in de losse events hiervoor)
+        await self._evt("resolution_reject_summary", item=item, reason=reason,
+              candidate_count=len(candidates), ranked_count=len(ranked),
+              provider_adds=provider_adds, fallback_count=fallback_count,
+              rejects=rejects or {"no_candidates": 1})
         return None
 
     async def _probe_readable(self, src: m.Source) -> bool:
@@ -383,7 +411,8 @@ class Resolver:
         return scored
 
     async def _validate_candidate(self, item: m.MediaItem,
-                                  cand: TorrentCandidate) -> m.Source | None:
+                                  cand: TorrentCandidate,
+                                  rejects: dict | None = None) -> m.Source | None:
         """Real validation: provider knows it AND bytes come back (206 probe)."""
         src = m.Source(
             id=m.new_id(), media_item_id=item.id, generation=item.generation,
@@ -396,6 +425,8 @@ class Resolver:
         if existing is not None:
             src = existing
         if src.is_bad():
+            if rejects is not None:
+                rejects["bad_ttl"] = rejects.get("bad_ttl", 0) + 1
             return None                                  # temporary bad TTL
 
         breakdown = self.scorer.score(
@@ -406,12 +437,30 @@ class Resolver:
         src.audio, src.release_type, src.language = parsed.audio, parsed.release_type, parsed.language
         src.hdr = parsed.video if parsed.video in ("dolby_vision", "hdr10") else None
 
+        # release-size sanity: guards against pack .nfo picks and
+        # mislabeled sample/segment releases (torrentio noise)
+        min_bytes = self.s.min_media_movie_mb if item.kind == "movie" \
+            else self.s.min_media_episode_mb
+        min_media = min_bytes << 20
+
         try:
             torrent = await self.provider.ensure_torrent(cand.info_hash, cand.torrent_name)
             choice = None
             if cand.file_index is not None and cand.file_index in torrent.files:
-                choice = (cand.file_index, torrent.files[cand.file_index])
-            elif torrent.files:
+                meta0 = torrent.files[cand.file_index]
+                # scraper-fileIdx kan op een sample/nfo/extras uit een pack
+                # wijzen; alleen vertrouwen als het een plausibel mediabestand
+                # is, anders beslist pick_file over de volledige filelijst
+                if meta0["name"].lower().endswith(VIDEO_EXTS) \
+                        and int(meta0["size"]) >= min_media:
+                    choice = (cand.file_index, meta0)
+                else:
+                    await self._evt("candidate_file_choice_rejected", item=item,
+                          hash=cand.info_hash, name=cand.torrent_name,
+                          file_index=cand.file_index, file=meta0["name"],
+                          size=int(meta0["size"]),
+                          reason="scraper fileIdx not a plausible media file")
+            if choice is None and torrent.files:
                 hint = cand.file_name
                 choice = self.provider.pick_file(torrent, hint) \
                     if hasattr(self.provider, "pick_file") else next(iter(torrent.files.items()))
@@ -419,11 +468,6 @@ class Resolver:
                 raise NotReadyError("torrent has no files")
             src.file_id, meta = choice
             src.file_name, known_size = meta["name"], int(meta["size"])
-            # release-size sanity: guards against pack .nfo picks and
-            # mislabeled sample/segment releases (torrentio noise)
-            min_bytes = self.s.min_media_movie_mb if item.kind == "movie" \
-                else self.s.min_media_episode_mb
-            min_media = min_bytes << 20
             if known_size and known_size < min_media:
                 raise NotReadyError(
                     f"release too small for {item.kind} "
@@ -441,8 +485,19 @@ class Resolver:
             src.bad_until = self._bad_until(src.failure_count)
             src.state = m.SourceState.FAILED.value
             await self.store.upsert_source(src)
+            err = str(exc)
+            # transient (nog niet klaar met downloaden/cachen) vs definitief
+            # ongeldig (too small / geen files): andere reject-reden in de trace
+            if "too small" in err or "no files" in err:
+                kind = "sanity_invalid"
+            elif isinstance(exc, NotReadyError):
+                kind = "transient_not_ready"
+            else:
+                kind = "probe_failed"
+            if rejects is not None:
+                rejects[kind] = rejects.get(kind, 0) + 1
             await self._evt("candidate_failed", item=item, hash=cand.info_hash,
-                  name=cand.torrent_name, error=str(exc),
+                  name=cand.torrent_name, error=err, reject_kind=kind,
                   bad_until=src.bad_until, failure_count=src.failure_count)
             return None
 

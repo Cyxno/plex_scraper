@@ -64,7 +64,10 @@ class Settings:
     stream_readahead_bytes: int = 8388608
 
     # state machine budgets
-    max_provider_adds_per_resolve: int = 1
+    # TorBox-cap is 60 uncached adds/uur account-breed; 3 begrensde adds per
+    # resolve houdt geldige alternatieven bereikbaar zonder die cap te raken
+    # (cached candidates verbruiken nooit budget).
+    max_provider_adds_per_resolve: int = 3
     # release-size sanity (guards pack .nfo picks + mislabeled fake releases)
     min_media_movie_mb: int = 268
     min_media_episode_mb: int = 64

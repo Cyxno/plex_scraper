@@ -109,7 +109,7 @@ async def test_failed_repair_keeps_readable_current_source(settings, scorer, got
     item = await _register(engine, got_item)
     first = await engine._active_source(item.id)
 
-    async def fail_all(item_, cand):
+    async def fail_all(item_, cand, rejects=None):
         return None
     monkeypatch.setattr(engine, "_validate_candidate", fail_all)
 
@@ -130,7 +130,7 @@ async def test_failed_repair_demotes_when_current_unreadable(settings, scorer, g
     engine, _p, _s = make_engine(settings, {}, {got_key(): got_results()}, scorer)
     item = await _register(engine, got_item)
 
-    async def fail_all(item_, cand):
+    async def fail_all(item_, cand, rejects=None):
         return None
     monkeypatch.setattr(engine, "_validate_candidate", fail_all)
 
@@ -173,10 +173,10 @@ async def test_grandfathered_hash_bypasses_identity_gate(settings, scorer, got_i
     engine._gather_candidates = only_two
     orig_validate = engine._validate_candidate
 
-    async def fail_wrong(item_, cand_):
+    async def fail_wrong(item_, cand_, rejects=None):
         if cand_.info_hash == "wrong1":
             return None
-        return await orig_validate(item_, cand_)
+        return await orig_validate(item_, cand_, rejects=rejects)
     engine._validate_candidate = fail_wrong
 
     got = await engine.resolve_item(item, reason="forced")
@@ -196,7 +196,7 @@ async def test_crash_reconciles_status(settings, scorer, got_item, monkeypatch):
     engine, _p, _s = make_engine(settings, {}, {got_key(): got_results()}, scorer)
     item = await _register(engine, got_item)
 
-    async def boom(item_, cand):
+    async def boom(item_, cand, rejects=None):
         raise RuntimeError("probe ontplofte")
     monkeypatch.setattr(engine, "_validate_candidate", boom)
 

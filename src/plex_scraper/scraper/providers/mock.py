@@ -71,8 +71,9 @@ class MockProvider(DebridProvider):
             spec["validate_failures_left"] -= 1
             raise NotReadyError(f"mock: torrent {info_hash} fails (transient)")
         file_id = 0
-        files = {file_id: {"name": spec.get("file_name") or f"{torrent_name}.mkv",
-                           "size": self._spec_size(info_hash)}}
+        files = spec.get("files") or {
+            file_id: {"name": spec.get("file_name") or f"{torrent_name}.mkv",
+                      "size": self._spec_size(info_hash)}}
         torrent_id = f"t-{abs(hash(info_hash)) % (10 ** 8)}"
         self._tid_to_hash[torrent_id] = info_hash
         return ProviderTorrent(
@@ -80,6 +81,27 @@ class MockProvider(DebridProvider):
             info_hash=info_hash, name=torrent_name,
             cached=bool(spec.get("cached")), ready=True, files=files,
         )
+
+    # multi-file packs: zelfde selectie-semantiek als de TorBox-provider
+    VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov", ".mpg", ".webm")
+    MIN_MEDIA_BYTES = 20 << 20
+
+    def pick_file(self, torrent: ProviderTorrent,
+                  file_name_hint: str | None = None) -> tuple[int, dict] | None:
+        if not torrent.files:
+            return None
+        videos = [(fid, meta) for fid, meta in sorted(torrent.files.items())
+                  if meta["name"].lower().endswith(self.VIDEO_EXTS)
+                  and meta["size"] >= self.MIN_MEDIA_BYTES]
+        pool = videos or list(torrent.files.items())
+        if file_name_hint:
+            hint = file_name_hint.lower()
+            for fid, meta in pool:
+                if hint in meta["name"].lower() or meta["name"].lower().endswith(hint):
+                    return fid, meta
+        if videos:
+            return max(videos, key=lambda kv: kv[1]["size"])
+        return max(pool, key=lambda kv: kv[1]["size"])
 
     async def get_stream_url(self, torrent_id: int, file_id: int) -> str:
         url = f"mock-stream://{torrent_id}/{file_id}"

@@ -88,7 +88,7 @@ class FakeResolver:
         return build_profile(size_bytes=size, media_bitrate_mbit=None,
                              duration_s=None, floor_mbit=25.0)
 
-    async def _validate_candidate(self, item, cand):
+    async def _validate_candidate(self, item, cand, rejects=None):
         if self.fail_validate:
             return None
         for s in self.sources:

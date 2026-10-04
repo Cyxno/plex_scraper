@@ -205,8 +205,24 @@ class TorboxProvider(DebridProvider):
 
     async def _add_magnet(self, info_hash: str, torrent_name: str) -> dict:
         magnet = f"magnet:?xt=urn:btih:{info_hash}&dn={torrent_name}"
-        body = await self._request("POST", "/torrents/createtorrent",
-                                   data={"magnet": magnet, "seed": 3, "allow_zip": "false"})
+        # createtorrent 400 is bij TorBox soms transient (cache-warm verzoek
+        # faalt eenmalig) en soms definitief ongeldig — één begrensde retry
+        # met backoff; persisterende 400 blijft een candidate-failure
+        # (temporary bad TTL), nooit een permanente item-status.
+        body = None
+        for attempt in range(2):
+            try:
+                body = await self._request("POST", "/torrents/createtorrent",
+                                           data={"magnet": magnet, "seed": 3,
+                                                 "allow_zip": "false"})
+                break
+            except ProviderError as exc:
+                if attempt == 0 and "HTTP 400" in str(exc):
+                    event("torbox_createtorrent_retry", hash=info_hash,
+                          delay=2.0, attempt=1, error=str(exc)[:160])
+                    await asyncio.sleep(2.0)
+                    continue
+                raise
         created = body.get("data") or {}
         torrent_id = self._extract_torrent_id(created)
         if torrent_id is None:
