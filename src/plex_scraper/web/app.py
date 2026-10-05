@@ -8,7 +8,7 @@ import os
 import sqlite3
 import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ..common.config import Settings
@@ -120,6 +120,18 @@ def create_web_app(settings: Settings) -> FastAPI:
             r = httpx.get(f"{resolver_base}/api/{path}", timeout=20.0)
             return JSONResponse(status_code=r.status_code, content=r.json())
         except Exception as exc:                       # resolver down
+            return JSONResponse(status_code=503,
+                                content={"error": f"resolver onbereikbaar: {exc!r}"[:200]})
+
+    @app.post("/ops-post/{path:path}")
+    async def ops_post_proxy(path: str, request: Request):
+        import httpx
+        try:
+            body = await request.body()
+            r = httpx.post(f"{resolver_base}/api/{path}", content=body,
+                           headers={"Content-Type": "application/json"}, timeout=120.0)
+            return JSONResponse(status_code=r.status_code, content=r.json())
+        except Exception as exc:
             return JSONResponse(status_code=503,
                                 content={"error": f"resolver onbereikbaar: {exc!r}"[:200]})
 

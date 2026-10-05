@@ -17,6 +17,16 @@ import time
 
 from fastapi import APIRouter
 from fastapi import HTTPException as HTTPError
+from pydantic import BaseModel
+
+
+class MagnetBody(BaseModel):
+    magnet: str
+    reason: str | None = None
+
+
+class MarkBadBody(BaseModel):
+    reason: str
 
 HUMAN_REJECTS = {
     "identity_wrong_show": ("verkeerde serie", "Identity"),
@@ -43,17 +53,25 @@ HUMAN_REJECTS = {
 OPERATION_KINDS = {
     "resolutions": ("resolution_started", "resolution_succeeded",
                     "resolution_failed", "resolution_reject_summary",
-                    "resolution_skip_uncached", "search_identity_incomplete"),
+                    "resolution_skip_uncached", "search_identity_incomplete",
+                    "candidate_identity_rejected", "candidate_failed",
+                    "candidate_pre_gate_rejected", "candidate_failed",
+                    "candidate_file_choice_rejected"),
     "repairs": ("sweep_repair_needed", "repair_kept_current",
-                "path_repair", "stale_state_reconciled"),
+                "path_repair", "stale_state_reconciled",
+                "plex_restart_recovery"),
     "failovers": ("jit_rescue_switch", "source_failed", "failover",
-                  "startup_failed"),
+                  "startup_failed", "candidate_grandfathered_retry"),
     "sweeper": ("sweep_strike", "sweep_paused_playback"),
     "playback": ("session_opened", "session_closed", "stall_detected",
                  "delivery_degraded", "startup_first_byte"),
     "provider": ("torbox_retry", "torbox_createtorrent_retry",
                  "upstream_http_4xx"),
-    "metadata": ("item_registered", "show_id_backfilled", "identity_corrected"),
+    "metadata": ("item_registered", "show_id_backfilled", "identity_corrected",
+                 "library_audit"),
+    "errors": ("resolution_crashed", "upstream_read_failed",
+               "physical_check_error", "operator_action_failed",
+               "startup_failed"),
 }
 
 
@@ -272,8 +290,10 @@ def create_ops_routes(app, resolver) -> APIRouter:
                 run["events"].append(e)
                 if e["kind"] == "resolution_succeeded":
                     run["outcome"] = "SUCCESS"
+                    open_runs.pop(e["media_item_id"], None)   # run is af
                 elif e["kind"] == "resolution_failed":
                     run["outcome"] = "FAILED"
+                    open_runs.pop(e["media_item_id"], None)
                 continue
             groups.append({"item_id": e["media_item_id"], "op": e["kind"],
                            "started": e["ts"], "events": [e],
@@ -304,20 +324,52 @@ def create_ops_routes(app, resolver) -> APIRouter:
                         "rejects": e.get("rejects")}
         return {}
 
+    SESSION_HUMAN = {
+        "session_opened": "Playback session opened",
+        "session_closed": "Playback session closed",
+        "startup_first_byte": "First byte received",
+        "startup_failed": "Startup failed — rescuing",
+        "source_failed": "Source failed",
+        "item_registered": "Item registered",
+        "sweep_repair_needed": "Repair applied by health sweep",
+        "repair_kept_current": "Repair verified current source still healthy",
+        "stale_state_reconciled": "Stale state reconciled",
+        "plex_restart_recovery": "Plex restarted to restore consumer mount",
+        "operator_action_started": "Operator action started",
+        "operator_action_completed": "Operator action completed",
+        "operator_action_failed": "Operator action failed",
+        "library_audit": "Library audit",
+        "torbox_retry": "Provider request retried",
+        "torbox_createtorrent_retry": "Provider add retried",
+        "physical_check_error": "Physical check error",
+    }
+
     def _human_summary(g: dict) -> str:
+        # B2/B4: nooit candidate-claims voor events die geen resolve zijn.
         kinds = [e["kind"] for e in g["events"]]
-        n_ok = kinds.count("resolution_succeeded")
-        if n_ok:
+        if "resolution_succeeded" in kinds:
             sel = next((e for e in reversed(g["events"])
                         if e["kind"] == "resolution_succeeded"), None)
             f = (sel.get("selected_candidate") or {}).get("file") if sel else None
-            return f"bron geselecteerd: {f}" if f else "bron geselecteerd"
-        rej = _rejects_of(g["events"]).get("rejects") or {}
-        if not rej:
-            return "geen candidates"
-        parts = [f"{v}× {HUMAN_REJECTS.get(k, (k, ''))[0]}"
-                 for k, v in rej.items() if v]
-        return "; ".join(parts[:4])
+            return f"Source activated: {f}" if f else "Source activated"
+        if "resolution_failed" in kinds or "resolution_reject_summary" in kinds:
+            rej = _rejects_of(g["events"]).get("rejects") or {}
+            if rej:
+                parts = [f"{v}x {HUMAN_REJECTS.get(k, (k, ''))[0]}"
+                         for k, v in rej.items() if v]
+                return "No usable candidate — " + "; ".join(parts[:4])
+            return "No usable candidate found"
+        first = g["events"][0]["kind"]
+        if first in SESSION_HUMAN:
+            base = SESSION_HUMAN[first]
+            if first == "session_closed":
+                dur = g["events"][0].get("duration_s") or (
+                    g["events"][0].get("closed_at") and None)
+                reads = g["events"][0].get("read_count")
+                extra = f" ({reads} reads)" if reads else ""
+                return base + extra
+            return base
+        return first.replace("_", " ")
 
     # --------------------------------------------------------------- issues
     async def _issues_data():
@@ -488,7 +540,8 @@ def create_ops_routes(app, resolver) -> APIRouter:
                             "retries": 0, "provider_400": 0, "provider_429": 0,
                             "provider_5xx": 0, "not_ready": 0,
                             "candidate_failures": 0, "transient": 0,
-                            "permanent": 0, "adds_last_resolves": []}}
+                            "permanent": 0, "adds_last_resolves": [],
+                            "window": "24h"}}
         resolves = 0
         for e in evs:
             if e["kind"] in ("torbox_retry", "torbox_createtorrent_retry"):
@@ -513,7 +566,7 @@ def create_ops_routes(app, resolver) -> APIRouter:
         s = stats["torbox"]
         s["avg_adds_per_resolve"] = (round(sum(s["adds_last_resolves"])
                                            / len(s["adds_last_resolves"]), 2)
-                                     if s["adds_last_resolves"] else 0)
+                                     if s["adds_last_resolves"] else None)  # N/A, geen fake 0
         s["budget_limit"] = getattr(resolver.s, "max_provider_adds_per_resolve", 3)
         if s["provider_5xx"] > 5 or s["retries"] > 20:
             s["status"] = "DEGRADED"
@@ -522,6 +575,159 @@ def create_ops_routes(app, resolver) -> APIRouter:
     @router.get("/providers/health")
     async def providers_health():
         return await _guarded("providers", _providers_data)
+
+
+    # ------------------------------------------------- operator actions (J)
+    _action_locks: set = set()
+
+    async def _action(item_id: str, action: str, fn):
+        """D/G/K: lock per (action,item), audit-trail, gestructureerd resultaat."""
+        key = f"{action}:{item_id}"
+        if key in _action_locks:
+            return {"action_id": key, "status": "BUSY",
+                    "item_id": item_id, "message": "action already running"}
+        _action_locks.add(key)
+        it = await store.get_item(item_id)
+        if it is None:
+            _action_locks.discard(key)
+            raise HTTPError(404, "item niet gevonden")
+        label = (it.series and f"{it.series} S{it.season:02d}E{it.episode:02d}") or it.title
+        await store.add_event("operator_action_started", item_id, action=action)
+        try:
+            out = await fn(it)
+            out = {"action_id": key, "item_id": item_id,
+                   "label": label, **out}
+            await store.add_event("operator_action_completed", item_id,
+                                  action=action, result=out.get("status"),
+                                  message=str(out.get("message"))[:160])
+            return out
+        except Exception as exc:                        # noqa: BLE001
+            await store.add_event("operator_action_failed", item_id,
+                                  action=action, error=repr(exc)[:160])
+            return {"action_id": key, "item_id": item_id, "status": "FAILED",
+                    "message": repr(exc)[:160]}
+        finally:
+            _action_locks.discard(key)
+
+    async def _resolve_bounded(item) -> dict:
+        src = await resolver.resolve_item(item, reason="operator_action")
+        if src is not None:
+            return {"status": "SUCCESS",
+                    "message": f"Source activated: {(src.file_name or '')[:80]}"}
+        return {"status": "NO_MATCH",
+                "message": "No usable candidate found (bounded search ran)"}
+
+    @router.post("/media/{item_id}/actions/search")
+    async def action_search(item_id: str):
+        async def fn(it):
+            out = await _resolve_bounded(it)
+            return out
+        return await _action(item_id, "search", fn)
+
+    @router.post("/media/{item_id}/actions/retry")
+    async def action_retry(item_id: str):
+        async def fn(it):
+            def clear(c):
+                c.execute("UPDATE sources SET bad_until=0, delivery_bad_until=0, "
+                          "failure_count=0 WHERE media_item_id=?", (it.id,))
+            await store.run(clear)
+            out = await _resolve_bounded(it)
+            return {**out, "message": "Retry state cleared. " + out["message"]}
+        return await _action(item_id, "retry", fn)
+
+    @router.post("/media/{item_id}/actions/recheck")
+    async def action_recheck(item_id: str):
+        async def fn(it):
+            active = await resolver._active_source(it.id)
+            if active is None:
+                return {"status": "NO_SOURCE",
+                        "message": "No active source to recheck"}
+            ok = await resolver._probe_readable(active)
+            return {"status": "SUCCESS" if ok else "FAILED",
+                    "message": ("Active source readable (probe OK)" if ok
+                                else "Active source FAILED read probe — marked for retry")}
+        return await _action(item_id, "recheck", fn)
+
+    @router.post("/media/{item_id}/actions/find-alternative")
+    async def action_find_alternative(item_id: str):
+        async def fn(it):
+            active = await resolver._active_source(it.id)
+            if active is None:
+                return {"status": "NO_SOURCE",
+                        "message": "No active source — use Search instead"}
+            # F3: huidige bron blijft actief tot vervanger bewezen is;
+            # markeer alleen tijdelijk slecht, herstel bij falen.
+            def mark_bad(c):
+                c.execute("UPDATE sources SET bad_until=? WHERE id=?",
+                          (time.time() + 3600.0, active.id))
+            await store.run(mark_bad)
+            src = await resolver.resolve_item(it, reason="find_alternative")
+            if src is not None and src.id != active.id:
+                return {"status": "SUCCESS",
+                        "message": f"Alternative activated: {(src.file_name or '')[:80]}"}
+            if src is not None:
+                def restore(c):
+                    c.execute("UPDATE sources SET bad_until=0 WHERE id=?",
+                              (active.id,))
+                await store.run(restore)
+                return {"status": "KEPT",
+                        "message": "Only the current source validated — kept"}
+            def restore(c):
+                c.execute("UPDATE sources SET bad_until=0 WHERE id=?",
+                          (active.id,))
+            await store.run(restore)
+            return {"status": "KEPT",
+                    "message": "No usable alternative found. Current source kept."}
+        return await _action(item_id, "find_alternative", fn)
+
+    @router.post("/media/{item_id}/actions/mark-bad")
+    async def action_mark_bad(item_id: str, body: MarkBadBody):
+        async def fn(it):
+            active = await resolver._active_source(it.id)
+            if active is None:
+                return {"status": "NO_SOURCE",
+                        "message": "No active source to mark bad"}
+            def mark(c):
+                c.execute("UPDATE sources SET bad_until=?, state='failed' WHERE id=?",
+                          (time.time() + 7 * 86400.0, active.id))
+            await store.run(mark)
+            return {"status": "SUCCESS",
+                    "message": f"Source marked bad ({body.reason}). Run Search to replace."}
+        return await _action(item_id, "mark_bad", fn)
+
+    @router.post("/media/{item_id}/actions/manual-magnet")
+    async def action_manual_magnet(item_id: str, body: MagnetBody):
+        import re as _re
+        m = _re.search(r"btih:([0-9a-fA-F]{40})", body.magnet or "")
+        if not m:
+            dn = _re.search(r"dn=([^&]+)", body.magnet or "")
+            return {"action_id": "magnet", "item_id": item_id,
+                    "status": "REJECTED",
+                    "message": "Invalid magnet: no 40-hex info_hash found"}
+        info_hash = m.group(1).lower()
+        dn = _re.search(r"dn=([^&]+)", body.magnet or "")
+        name = (dn.group(1) if dn else info_hash)[:120]
+
+        async def fn(it):
+            from plex_scraper.scraper.scrapers.base import TorrentCandidate
+            from plex_scraper.resolver.selfheal import identity_gate
+            cand = TorrentCandidate(info_hash=info_hash, torrent_name=name,
+                                    size=None, seeders=None,
+                                    file_name=None, file_index=None)
+            ok, why, _sub = identity_gate(it.title, it.series, it.season,
+                                          it.episode, name, it.year)
+            if not ok:
+                return {"status": "REJECTED",
+                        "message": f"Identity gate rejected magnet: {why}"}
+            src = await resolver._validate_candidate(it, cand)
+            if src is None:
+                return {"status": "REJECTED",
+                        "message": "Magnet failed validation (probe/sanity) — not activated"}
+            previous = await resolver._active_source(it.id)
+            await resolver._activate(it, src, previous, reason="operator_magnet")
+            return {"status": "SUCCESS",
+                    "message": f"Magnet validated and activated: {(src.file_name or name)[:80]}"}
+        return await _action(item_id, "manual_magnet", fn)
 
     app.include_router(router)
     return router

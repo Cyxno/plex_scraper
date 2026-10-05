@@ -298,3 +298,82 @@ async def test_blip_is_suspect_not_failed(settings):
     assert mon.state["status"] == "SUSPECT"       # één blip = SUSPECT
     await mon._record({"status": "READ_ERROR", "checked_at": 2.0})
     assert mon.state["status"] == "READ_ERROR"
+
+
+# --- Activity semantics (null ≠ 0) + actions + jobs ---------------------------
+
+async def test_activity_session_closed_never_claims_candidates(settings, scorer,
+                                                               got_item):
+    """P0: session_closed zonder candidate-veld mag géén 'no candidates'
+    tonen; een échte 0-candidate resolve wél."""
+    client, engine = _client(settings, scorer, got_item)
+    item = await engine.register_item(dict(got_item))
+    await engine.store.add_event("session_closed", item.id, read_count=2)
+    a = client.get("/api/activity?hours=24&filter=playback").json()
+    cards = [c for c in a["cards"] if c["item"] and c["item"]["id"] == item.id]
+    assert cards and "candidate" not in cards[0]["detail"].lower()
+    assert "playback" in cards[0]["detail"].lower()
+    # echte 0-candidate resolve -> wél 'no candidates'
+    await engine.store.add_event("resolution_started", item.id,
+                                 candidate_count=0)
+    await engine.store.add_event("resolution_failed", item.id,
+                                 candidate_count=0)
+    a2 = client.get("/api/activity?hours=24&filter=resolutions").json()
+    res = [c for c in a2["cards"] if c["item"] and c["item"]["id"] == item.id]
+    assert any("no usable candidate" in c["detail"].lower() for c in res)
+
+
+async def test_activity_errors_filter_and_operator_events(settings, scorer,
+                                                         got_item):
+    client, engine = _client(settings, scorer, got_item)
+    item = await engine.register_item(dict(got_item))
+    await engine.store.add_event("operator_action_started", item.id,
+                                 action="search")
+    await engine.store.add_event("operator_action_completed", item.id,
+                                 action="search", result="SUCCESS")
+    a = client.get("/api/activity?hours=24").json()
+    assert any("operator" in (c["op"] or "") for c in a["cards"])
+
+
+async def test_action_endpoints_validation_and_audit(settings, scorer, got_item):
+    """Invalid magnet wordt geweigerd mét reden; acties schrijven audit-events;
+    search op een gezond item houdt READ-items intact."""
+    from conftest import make_engine, got_key, cand
+    engine, provider, _s = make_engine(
+        settings, {}, {got_key(): [cand("got2160dv",
+                                        "Game.of.Thrones.S01E01.2160p.DV.REMUX-GRP",
+                                        size=8_000_000_000)]}, scorer)
+    from plex_scraper.resolver.api.app import create_app
+    from fastapi.testclient import TestClient
+    client = TestClient(create_app(engine, settings))
+    item = await engine.register_item(dict(got_item))
+
+    r = client.post(f"/api/media/{item.id}/actions/manual-magnet",
+                    json={"magnet": "magnet:?xt=urn:btih:notavalidhash"})
+    assert r.json()["status"] == "REJECTED"
+    assert "info_hash" in r.json()["message"]
+
+    r = client.post(f"/api/media/{item.id}/actions/mark-bad",
+                    json={"reason": "Buffering"})
+    assert r.json()["status"] in ("SUCCESS", "NO_SOURCE")
+
+    r = client.post(f"/api/media/{item.id}/actions/search", json={})
+    assert r.json()["status"] in ("SUCCESS", "NO_MATCH")
+
+    evs = [e for e in await engine.store.recent_events(100)
+           if e.get("media_item_id") == item.id
+           and str(e.get("kind", "")).startswith("operator_action")]
+    assert evs, "geen audit-trail voor operator-acties"
+
+
+async def test_job_finish_writes_processed(settings):
+    """H: een afgeronde sweep toont processed in de rij (geen 0/0-naar-INTERRUPTED)."""
+    from plex_scraper.resolver.store import Store
+    store = Store(str(settings.db_path))
+    rid = await store.job_start("health_sweeper", progress_total=7)
+    await store.job_progress(rid, processed=3)
+    await store.job_finish(rid, "SUCCESS", checks=7, processed=7, changed=1,
+                           recovered=2)
+    runs = await store.job_runs("health_sweeper")
+    top = runs[0]
+    assert top["status"] == "SUCCESS" and top["processed"] == 7

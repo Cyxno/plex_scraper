@@ -1,105 +1,87 @@
 <!doctype html>
-<html lang="nl">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>plex_scraper — operationele cockpit</title>
+<title>plex_scraper — operations cockpit</title>
 <style>
-:root{
-  --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#2d333b;
-  --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff;
-  --ok:#3fb950; --warn:#d29922; --err:#f85149; --run:#58a6ff; --retry:#bc8cff;
-  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
-}
+:root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--border:#2d333b;--text:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--ok:#3fb950;--warn:#d29922;--err:#f85149;--run:#58a6ff;--retry:#bc8cff;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);
-  font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
 a{color:var(--accent);text-decoration:none}
-a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{
-  outline:2px solid var(--accent);outline-offset:1px}
-header{display:flex;align-items:center;gap:10px;padding:8px 18px;
-  background:var(--panel);border-bottom:1px solid var(--border);
-  position:sticky;top:0;z-index:5;flex-wrap:wrap}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+header{display:flex;align-items:center;gap:10px;padding:8px 18px;background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5;flex-wrap:wrap}
 header h1{font-size:15px;margin:0;font-weight:600}
 nav{display:flex;gap:2px;flex-wrap:wrap}
-nav button{background:none;border:0;color:var(--muted);padding:7px 11px;
-  cursor:pointer;border-radius:6px;font:inherit}
+nav button{background:none;border:0;color:var(--muted);padding:7px 11px;cursor:pointer;border-radius:6px;font:inherit}
 nav button:hover{color:var(--text);background:var(--panel2)}
 nav button.on{color:var(--text);background:var(--panel2);font-weight:600}
-#live{margin-left:auto;font-size:12px;color:var(--muted);display:flex;
-  align-items:center;gap:6px}
+#live{margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
 #live .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
 #live.off .dot{background:var(--warn)}
 main{padding:14px 18px;max-width:1280px;margin:0 auto}
 section{display:none}
 section.on{display:block}
-h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--muted);margin:16px 0 6px}
-.banner{padding:8px 14px;border-radius:8px;font-weight:600;margin:2px 0 12px;
-  border:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:13px}
-.banner.HEALTHY{border-color:var(--ok)} .banner.HEALTHY .h{color:var(--ok)}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:16px 0 6px}
+.banner{padding:8px 14px;border-radius:8px;font-weight:600;margin:2px 0 12px;border:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:13px}
+.banner.HEALTHY{border-color:var(--ok)}.banner.HEALTHY .h{color:var(--ok)}
 .banner.DEGRADED,.banner.ATTENTION{border-color:var(--warn)}
 .banner.DEGRADED .h,.banner.ATTENTION .h{color:var(--warn)}
-.banner.ERROR{border-color:var(--err)} .banner.ERROR .h{color:var(--err)}
+.banner.ERROR{border-color:var(--err)}.banner.ERROR .h{color:var(--err)}
 .grid{display:grid;gap:8px}
 .kpis{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
-.kpi{background:var(--panel);border:1px solid var(--border);border-radius:8px;
-  padding:8px 11px}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:8px 11px}
 .kpi .n{font-size:20px;font-weight:700}
 .kpi .l{font-size:11.5px;color:var(--muted)}
-.kpi.ok .n{color:var(--ok)} .kpi.err .n{color:var(--err)}
-.kpi.warn .n{color:var(--warn)} .kpi.run .n{color:var(--run)}
+.kpi.ok .n{color:var(--ok)}.kpi.err .n{color:var(--err)}.kpi.warn .n{color:var(--warn)}.kpi.run .n{color:var(--run)}
 .cols{grid-template-columns:1fr 1fr}
 @media(max-width:900px){.cols{grid-template-columns:1fr}}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:8px;
-  padding:10px 13px;margin-bottom:8px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 13px;margin-bottom:8px}
 .card h3{margin:0 0 4px;font-size:13.5px}
 .muted{color:var(--muted);font-size:12px}
-.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;
-  font-weight:600;border:1px solid}
-.b-SUCCESS,.b-READY,.b-RECOVERED{color:var(--ok);border-color:var(--ok)}
-.b-FAILED,.b-NO_SOURCE,.b-ERROR{color:var(--err);border-color:var(--err)}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;border:1px solid}
+.b-SUCCESS,.b-READY,.b-RECOVERED,.b-COMPLETED,.b-KEPT{color:var(--ok);border-color:var(--ok)}
+.b-FAILED,.b-NO_SOURCE,.b-ERROR,.b-REJECTED{color:var(--err);border-color:var(--err)}
 .b-WARNING,.b-ATTENTION,.b-DEGRADED{color:var(--warn);border-color:var(--warn)}
 .b-RUNNING,.b-RESOLVING{color:var(--run);border-color:var(--run)}
 .b-RETRYING,.b-DEFERRED,.b-INTERRUPTED{color:var(--retry);border-color:var(--retry)}
-.b-NO_MATCH,.b-neutral,.b-INFO{color:var(--muted);border-color:var(--border)}
+.b-NO_MATCH,.b-neutral,.b-INFO,.b-BUSY{color:var(--muted);border-color:var(--border)}
 table{width:100%;border-collapse:collapse;font-size:13px}
-th{color:var(--muted);text-align:left;font-size:11px;text-transform:uppercase;
-  letter-spacing:.06em;padding:5px 8px;border-bottom:1px solid var(--border)}
+th{color:var(--muted);text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding:5px 8px;border-bottom:1px solid var(--border)}
 td{padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:top}
 tr:hover td{background:var(--panel2)}
 .filters{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
-.filters button,.filters select{background:var(--panel);color:var(--muted);
-  border:1px solid var(--border);border-radius:6px;padding:5px 10px;
-  font:inherit;font-size:12px;cursor:pointer}
+.filters button,.filters select{background:var(--panel);color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font:inherit;font-size:12px;cursor:pointer}
 .filters button.on{color:var(--text);border-color:var(--accent)}
-input[type=search]{background:var(--panel);color:var(--text);
-  border:1px solid var(--border);border-radius:6px;padding:6px 10px;
-  font:inherit;font-size:13px;min-width:180px}
-.progress{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden;
-  margin-top:3px}
+input[type=search]{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font:inherit;font-size:13px;min-width:180px}
+.progress{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden;margin-top:3px}
 .progress i{display:block;height:100%;background:var(--accent);transition:width .6s}
 .empty{padding:20px;text-align:center;color:var(--muted)}
 .chain{font-family:var(--mono);font-size:12px;line-height:1.9}
 .chain .step{display:block;padding:2px 8px;border-left:2px solid var(--border)}
-.chain .ok{border-color:var(--ok)} .chain .bad{border-color:var(--err)}
+.chain .ok{border-color:var(--ok)}.chain .bad{border-color:var(--err)}
 .arrow{color:var(--muted);padding-left:14px}
 details{margin-top:5px}
 summary{cursor:pointer;color:var(--accent);font-size:12px}
 .pager{display:flex;gap:8px;align-items:center;margin:8px 0}
-.pager button{background:var(--panel);color:var(--text);
-  border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer}
+.pager button{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer}
 .bar{display:flex;gap:3px;flex-wrap:wrap;margin-top:4px}
-.bar span{padding:1px 7px;border-radius:8px;font-size:11px;
-  border:1px solid var(--border);color:var(--muted)}
+.bar span{padding:1px 7px;border-radius:8px;font-size:11px;border:1px solid var(--border);color:var(--muted)}
 .bar b{color:var(--text)}
-#itemdlg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;
-  overflow:auto;z-index:10}
-#itemdlg .inner{background:var(--bg);max-width:980px;margin:24px auto;
-  border:1px solid var(--border);border-radius:10px;padding:16px}
-@media(max-width:640px){#itemdlg .inner{margin:0;border-radius:0;min-height:100vh}
-  .kpis{grid-template-columns:1fr 1fr}
-  .tablewrap{overflow-x:auto}}
+button.act{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 9px;font:inherit;font-size:11.5px;cursor:pointer}
+button.act:hover{border-color:var(--accent)}
+button.act:disabled{opacity:.45;cursor:default}
+button.act.danger{border-color:var(--err);color:var(--err)}
+.actmsg{font-size:12px;margin-top:4px}
+.actmsg.SUCCESS{color:var(--ok)}.actmsg.FAILED,.actmsg.REJECTED{color:var(--err)}
+.actmsg.RUNNING,.actmsg.BUSY{color:var(--run)}.actmsg.KEPT,.actmsg.NO_MATCH{color:var(--warn)}
+#itemdlg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;overflow:auto;z-index:10}
+#itemdlg .inner{background:var(--bg);max-width:980px;margin:24px auto;border:1px solid var(--border);border-radius:10px;padding:16px}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;z-index:20;align-items:center;justify-content:center}
+#modal .box{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px;min-width:320px;max-width:480px}
+#modal input,#modal select{width:100%;margin:8px 0;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 9px;font:inherit}
+#modal .row{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+@media(max-width:640px){#itemdlg .inner{margin:0;border-radius:0;min-height:100vh}.kpis{grid-template-columns:1fr 1fr}.tablewrap{overflow-x:auto}}
 @media(prefers-reduced-motion:reduce){.progress i{transition:none}}
 </style>
 </head>
@@ -117,65 +99,58 @@ summary{cursor:pointer;color:var(--accent);font-size:12px}
   <div id="live" role="status" aria-live="polite"><span class="dot"></span><span id="livetext">Live</span></div>
 </header>
 <main>
-
 <section id="s-overview" class="on">
-  <div id="healthbanner" class="banner" aria-live="polite"><span class="muted">laden…</span></div>
+  <div id="healthbanner" class="banner" aria-live="polite"><span class="muted">Loading…</span></div>
   <h2>Library</h2><div id="kpilib" class="grid kpis"></div>
   <h2>Automation &amp; providers</h2><div id="kpiauto" class="grid kpis"></div>
   <div class="grid cols" style="margin-top:10px">
-    <div><h2>Nu actief</h2><div id="nowactive"></div></div>
-    <div><h2>Recent automatisch hersteld</h2><div id="wins"></div></div>
+    <div><h2>Active now</h2><div id="nowactive"></div></div>
+    <div><h2>Recent automatic recoveries</h2><div id="wins"></div></div>
   </div>
-  <h2>Sweeper</h2><div id="sweeperbox"></div>
+  <h2>Health sweeper</h2><div id="sweeperbox"></div>
 </section>
-
 <section id="s-activity">
   <div class="filters" id="actfilters">
-    <button data-f="all" class="on">Alles</button>
+    <button data-f="all" class="on">All</button>
     <button data-f="resolutions">Resolutions</button>
     <button data-f="repairs">Repairs</button>
     <button data-f="failovers">Failovers</button>
     <button data-f="sweeper">Sweeper</button>
     <button data-f="playback">Playback</button>
     <button data-f="provider">Provider</button>
-    <select id="acthours" aria-label="Tijdvenster"><option value="1">1u</option>
-      <option value="24" selected>24u</option><option value="168">7d</option></select>
+    <button data-f="errors">Errors</button>
+    <select id="acthours" aria-label="Time window"><option value="1">1h</option><option value="24" selected>24h</option><option value="168">7d</option></select>
   </div>
   <div id="activity"></div>
-  <div class="pager"><button id="actprev" aria-label="Vorige pagina">←</button><span id="actpage" class="muted"></span><button id="actnext" aria-label="Volgende pagina">→</button></div>
+  <div class="pager"><button id="actprev" aria-label="Previous page">←</button><span id="actpage" class="muted"></span><button id="actnext" aria-label="Next page">→</button></div>
 </section>
-
 <section id="s-issues"><div id="issues"></div></section>
-
 <section id="s-library">
-  <div class="filters"><input id="libq" type="search" placeholder="Zoek titel/serie…" aria-label="Zoeken">
-    <select id="libstatus" aria-label="Statusfilter"><option value="">Alle statuses</option>
-      <option>READY</option><option>NO_SOURCE</option><option>RESOLVING</option>
-      <option>CANDIDATE_VALIDATION</option><option>SOURCE_FAILED</option></select>
+  <div class="filters"><input id="libq" type="search" placeholder="Search title/series…" aria-label="Search">
+    <select id="libstatus" aria-label="Status filter"><option value="">All statuses</option><option>READY</option><option>NO_SOURCE</option><option>RESOLVING</option><option>CANDIDATE_VALIDATION</option><option>SOURCE_FAILED</option></select>
   </div>
   <div class="card tablewrap" style="padding:0"><table id="libtable"></table></div>
   <div class="muted" id="libcount"></div>
 </section>
-
 <section id="s-jobs"><div id="jobs"></div></section>
 <section id="s-providers"><div id="providers"></div></section>
 </main>
-
 <div id="itemdlg" role="dialog" aria-modal="true"><div class="inner"><div id="itembody"></div>
-<p style="text-align:right;margin-bottom:0"><a href="#" onclick="closeItem();return false">sluiten</a></p></div></div>
-
+<p style="text-align:right;margin-bottom:0"><a href="#" onclick="closeItem();return false">close</a></p></div></div>
+<div id="modal"><div class="box"><div id="modalbody"></div>
+<div class="row"><button class="act" onclick="closeModal()">Cancel</button>
+<button class="act" id="modalok">Confirm</button></div></div></div>
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ago = ts => { const d = Math.round(Date.now()/1000 - ts);
-  if (d < 60) return `${d}s geleden`; if (d < 3600) return `${Math.round(d/60)}m geleden`;
-  if (d < 86400) return `${Math.round(d/3600)}u geleden`; return `${Math.round(d/86400)}d geleden`; };
-const fmtIn = s => s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s/60)}m` : `${Math.round(s/3600)}u`;
+  if (d < 60) return `${d}s ago`; if (d < 3600) return `${Math.round(d/60)}m ago`;
+  if (d < 86400) return `${Math.round(d/3600)}h ago`; return `${Math.round(d/86400)}d ago`; };
+const fmtIn = s => s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s/60)}m` : `${Math.round(s/3600)}h`;
 const badge = (t,c)=>`<span class="badge b-${esc(c||t)}">${esc(t)}</span>`;
+const NA = '<span class="muted">N/A</span>';
 let failures = 0;
-/* Capture-harness: ?shot=1 maakt de eerste laadronde synchroon zodat een
-   headless screenshot na het load-event een gevulde cockpit ziet. */
 const SHOT = new URLSearchParams(location.search).has('shot');
 if (SHOT) window.fetch = path => {
   const x = new XMLHttpRequest(); x.open('GET', path, false); x.send();
@@ -183,8 +158,6 @@ if (SHOT) window.fetch = path => {
           json: () => Promise.resolve(JSON.parse(x.responseText)),
           text: () => Promise.resolve(x.responseText)};
 };
-
-/* ---------- api: dedupe + stale-preserving (B6/G2/E3) ---------- */
 const lastGood = {}; const inflight = {};
 async function api(path){
   if (inflight[path]) throw new Error('busy');
@@ -202,7 +175,7 @@ async function apiKeep(path, render){
   try{ render(await api(path)); markFresh(); }
   catch(e){
     if (e.message === 'busy') return;
-    failures++; setLive(false);            // render NIET leegmaken (R)
+    failures++; setLive(false);
     const lg = lastGood[path];
     if (lg) markStale(lg.t);
   }
@@ -210,13 +183,10 @@ async function apiKeep(path, render){
 let staleTick = null;
 function markStale(t){
   if (staleTick) clearInterval(staleTick);
-  const upd = ()=>{ $('#livetext').textContent =
-    `Bijwerken… (data ${Math.round((Date.now()-t)/1000)}s oud)`; };
+  const upd = ()=>{ $('#livetext').textContent = `Updating… (data ${Math.round((Date.now()-t)/1000)}s old)`; };
   upd(); staleTick = setInterval(upd, 1000);
 }
 function markFresh(){ if (staleTick){ clearInterval(staleTick); staleTick = null; } }
-
-/* G3: geen flikker — alleen DOM vervangen bij échte verandering */
 const rendered = {};
 function paintInto(sel, key, html){
   if (rendered[key] === html) return;
@@ -226,104 +196,149 @@ const kpi = (n,l,cls='')=>`<div class="kpi ${cls}"><div class="n">${n??'–'}</d
 const card = (t,sub,right)=>`<div class="card"><h3>${t} <span style="float:right">${right||''}</span></h3><div>${sub||''}</div></div>`;
 const empty = t=>`<div class="empty">${t}</div>`;
 const pct = j => j.progress_total ? Math.min(99, Math.round((j.progress_current||0)/j.progress_total*100)) : 0;
+const REJHUMAN = {
+  identity_wrong_show:'wrong series', identity_pack_missing_episode:'episode not in pack',
+  identity_wrong_movie:'wrong movie', identity_wrong_year:'wrong year',
+  pre_gate_size:'too small (pre-filtered)', budget_exhausted:'not tried (add budget used)',
+  file_too_small:'file too small', torrent_no_files:'no files',
+  provider_400:'provider refused (400)', provider_429:'rate limited',
+  provider_5xx:'provider outage', torrent_not_ready:'not ready yet',
+  first_byte_empty:'no first byte', range_failed:'read probe failed',
+  backend_unavailable:'backend unreachable', provider_add_failed:'add failed',
+  unknown_probe_failure:'unknown', bad_ttl:'recently failed, temporarily skipped',
+  no_candidates:'no candidates'};
 function rejectBar(rej){
   if (!rej || !Object.keys(rej).length) return '';
-  return `<div class="bar">${Object.entries(rej).map(([k,v])=>
-    `<span>${esc(REJHUMAN[k]||k)} <b>${v}</b></span>`).join('')}</div>`;
+  return `<div class="bar">${Object.entries(rej).map(([k,v])=>`<span>${esc(REJHUMAN[k]||k)} <b>${v}</b></span>`).join('')}</div>`;
 }
-const REJHUMAN = {
-  identity_wrong_show:'verkeerde serie', identity_pack_missing_episode:'aflevering niet in pack',
-  identity_wrong_movie:'verkeerde film', identity_wrong_year:'verkeerd jaar',
-  pre_gate_size:'te klein (vooraf)', budget_exhausted:'niet geprobeerd (budget op)',
-  file_too_small:'bestand te klein', torrent_no_files:'geen bestanden',
-  provider_400:'provider weigerde (400)', provider_429:'rate limited',
-  provider_5xx:'provider-storing', torrent_not_ready:'nog niet gereed',
-  first_byte_empty:'geen eerste byte', range_failed:'lees-probe faalt',
-  backend_unavailable:'backend onbereikbaar', provider_add_failed:'toevoegen faalt',
-  unknown_probe_failure:'onbekend', bad_ttl:'recent mislukt, tijdelijk overgeslagen',
-  no_candidates:'geen candidates'};
-
-/* ---------- overview ---------- */
+async function doAction(itemId, action, body){
+  const r = await fetch(`/ops-post/media/${itemId}/actions/${action}`,
+    {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})});
+  return r.json();
+}
+async function runAction(ev, itemId, action, body, sel){
+  const btn = ev && ev.target;
+  if (btn) btn.disabled = true;
+  if (sel) $(sel).innerHTML = `<div class="actmsg RUNNING">${badge('RUNNING')} Working…</div>`;
+  try{
+    const out = await doAction(itemId, action, body);
+    if (sel) $(sel).innerHTML = `<div class="actmsg ${esc(out.status||'RUNNING')}">${badge(out.status||'RUNNING')} ${esc(out.message||'')}</div>`;
+    lastPoll.overview = 0; lastPoll.issues = 0; lastPoll.jobs = 0; lastPoll.activity = 0;
+    return out;
+  } finally { if (btn) setTimeout(()=>btn.disabled=false, 1500); }
+}
+function askMagnet(itemId, sel){
+  openModal('Add manual torrent (magnet)', `
+    <label>Info-hash / magnet link</label>
+    <input id="maginput" placeholder="magnet:?xt=urn:btih:<40-hex>&dn=Release.Name">
+    <div class="muted">Goes through the normal validation chain: identity gate, provider add, file inspection, read probe. Nothing is activated without proof.</div>`,
+    async ()=>{
+      const v = $('#maginput').value.trim();
+      if (!v) return false;
+      await runAction(null, itemId, 'manual-magnet', {magnet: v}, sel);
+      return true;
+    });
+}
+function askMarkBad(itemId, sel){
+  openModal('Mark current source bad', `
+    <label>Reason</label>
+    <select id="badreason">
+      <option>Buffering</option><option>Won't start</option>
+      <option>Wrong episode/movie</option><option>Corrupt media</option>
+      <option>Too slow</option><option>Wrong audio/subtitle</option><option>Other</option>
+    </select>
+    <div class="muted">The source is skipped for 7 days and the action is recorded in the audit trail. Use "Find another source" to replace it safely.</div>`,
+    async ()=>{
+      const v = $('#badreason').value;
+      await runAction(null, itemId, 'mark-bad', {reason: v}, sel);
+      return true;
+    });
+}
+function openModal(title, html, onOk){
+  $('#modalbody').innerHTML = `<h3>${esc(title)}</h3>${html}`;
+  $('#modal').style.display = 'flex';
+  $('#modalok').onclick = async ()=>{ if (await onOk()) closeModal(); };
+}
+function closeModal(){ $('#modal').style.display = 'none'; }
 function overviewHtml(d){
   const L = d.library;
-  const cause = d.issues.no_source ? `${d.issues.no_source} items vereisen aandacht`
-    : L.identity_incomplete ? `${L.identity_incomplete} items identiteit incompleet`
-    : 'alle beheerde items gezond';
+  const cause = d.issues.no_source ? `${d.issues.no_source} items need attention`
+    : L.identity_incomplete ? `${L.identity_incomplete} items identity incomplete`
+    : 'all managed items healthy';
   const banner = badge(d.health, d.health==='HEALTHY'?'SUCCESS':d.health)
-    + `<span class="h">${{HEALTHY:'Systeem gezond',DEGRADED:'Verminderd',ATTENTION:'Aandacht',ERROR:'Fout'}[d.health]||d.health}</span>`
+    + `<span class="h">${{HEALTHY:'System healthy',DEGRADED:'Degraded',ATTENTION:'Attention',ERROR:'Error'}[d.health]||d.health}</span>`
     + `<span class="muted" style="font-weight:400">— ${cause}</span>`;
   const kpilib = kpi(L.ready,'READY','ok') + kpi(L.resolving,'resolving',L.resolving?'run':'')
     + kpi(L.no_source,'issues',L.no_source?'err':'ok')
-    + kpi(L.identity_incomplete,'identiteit incompleet',L.identity_incomplete?'warn':'ok')
-    + kpi(L.total,'totaal');
-  const kpiauto = kpi(d.playback.active,'actieve streams',d.playback.active?'run':'')
-    + kpi(d.provider.candidate_failures,'candidate-failures 24u')
-    + kpi(d.provider.transient,'transient 24u',d.provider.transient?'warn':'')
-    + kpi((d.sweeper.last_runs||[]).reduce((a,r)=>a+(r.recovered||0),0),'hersteld (sweeper)','ok')
-    + kpi(d.provider.retries,'provider-retries 24u');
+    + kpi(L.identity_incomplete,'identity incomplete',L.identity_incomplete?'warn':'ok')
+    + kpi(L.total,'total');
+  const kpiauto = kpi(d.playback.active,'active streams',d.playback.active?'run':'')
+    + kpi(d.provider.candidate_failures,'candidate failures 24h')
+    + kpi(d.provider.transient,'transient 24h',d.provider.transient?'warn':'')
+    + kpi((d.sweeper.last_runs||[]).reduce((a,r)=>a+(r.recovered||0),0),'recovered (sweeper)','ok')
+    + kpi(d.provider.retries,'provider retries 24h');
   const now = (d.now.resolving.length || d.now.jobs_running.length)
     ? d.now.resolving.map(r=>card(esc(r.label),'Resolving',badge('RUNNING'))).join('')
       + d.now.jobs_running.map(j=>card(esc(j.job_type)+(j.current_item?` — ${esc(j.current_item)}`:''),
-        `job ${j.progress_current??0} / ${j.progress_total??"?"}`,
+        `job ${j.progress_current??0} / ${j.progress_total??'?'}`,
         `<div class="progress"><i style="width:${pct(j)}%"></i></div>`)).join('')
-    : empty('Idle — geen actieve resolvers of jobs.');
+    : empty('Idle — no active resolutions or jobs.');
   const wins = d.recent_wins.length ? d.recent_wins.map(w=>
-    card(esc(w.label), `NO_SOURCE → READY${w.file?`<div class="muted">${esc(w.file)}</div>`:''}`,
+    card(esc(w.label), `NO SOURCE → READY${w.file?`<div class="muted">${esc(w.file)}</div>`:''}`,
       `${badge('RECOVERED')} <span class="muted">${ago(Date.now()/1000-w.ago_s)}</span>`)).join('')
-    : empty('Geen automatische herstels in de laatste 24u.');
+    : empty('No automatic recoveries in the last 24h.');
   const sw = (d.sweeper.last_runs||[])[0];
   const sweeper = sw ? card('Health sweeper',
-    `${sw.processed??'?'} items verwerkt, ${sw.recovered||0} hersteld · ${ago(sw.finished_at||sw.started_at)}`,
-    badge(sw.status==='SUCCESS'?'SUCCESS':sw.status, sw.status==='SUCCESS'?'SUCCESS':'RETRYING'))
-    : empty('Nog geen sweeper-runs vastgelegd.');
+    `${sw.processed??0} items processed, ${sw.recovered||0} recovered · ${ago(sw.finished_at||sw.started_at)}`,
+    badge(sw.status==='SUCCESS'?'COMPLETED':sw.status, sw.status==='SUCCESS'?'COMPLETED':'RETRYING'))
+    : empty('No sweeper runs recorded yet.');
   const P = d.physical || {};
   let banner2 = banner;
   if (P.status && P.status !== 'HEALTHY') {
     const cls = P.status === 'FAILED' ? 'ERROR' : 'DEGRADED';
     banner2 = `<div class="banner ${cls}">${badge(cls==='ERROR'?'ERROR':'WARNING', cls==='ERROR'?'ERROR':'WARNING')}`
       + `<span class="h">Playback storage unavailable</span>`
-      + `<span class="muted" style="font-weight:400">— ${esc(P.status)} · ${esc(P.detail||'onbekende fout')}`
-      + `${P.last_healthy_at?` · laatste gezond: ${ago(P.last_healthy_at)}`:''}</span></div>`;
+      + `<span class="muted" style="font-weight:400">— ${esc(P.status)} · ${esc(P.detail||'unknown error')}`
+      + `${P.last_healthy_at?` · last healthy: ${ago(P.last_healthy_at)}`:''}</span></div>`;
   }
   const physical = card('Physical library',
-    `${P.status||'onbekend'}${P.checked_at?` · gecheckt ${ago(P.checked_at)}${P.latency_s!=null?` · ${P.latency_s}s`:''}`:''}`,
+    `${P.status||'unknown'}${P.checked_at?` · checked ${ago(P.checked_at)}${P.latency_s!=null?` · ${P.latency_s}s`:''}`:''}`,
     badge(P.status==='HEALTHY'?'HEALTHY':P.status==='FAILED'?'FAILED':'RETRYING',
           P.status==='HEALTHY'?'SUCCESS':P.status==='FAILED'?'FAILED':'RETRYING'));
   return {banner: banner2, kpilib, kpiauto: kpiauto.replace('</div>', physical+'</div>'), now, wins, sweeper};
 }
-
-/* ---------- activity ---------- */
 let actFilter='all', actPage=0;
 function activityHtml(d){
-  if (!d.cards.length) return empty('Geen activiteit in dit filter/time-window.');
+  if (!d.cards.length) return empty('No activity in this filter / time window.');
   return d.cards.map(c=>{
     const st = {SUCCESS:'SUCCESS',FAILED:'FAILED',RUNNING:'RUNNING'}[c.outcome]||'INFO';
     return `<div class="card"><h3>${esc(c.op)} — ${esc(c.item?.label||'?')}
       <span style="float:right">${badge(st,st)} <span class="muted">${ago(c.ts)}</span></span></h3>
-      <div>${esc(c.detail||'')}${c.candidate_count?` · ${c.candidate_count} candidates`:''}
-      ${c.duration_s?` · ${c.duration_s}s`:''}</div>
-      ${c.rejects?rejectBar(c.rejects):''}</div>`;}).join('');
+      <div>${esc(c.detail||'')}</div></div>`;}).join('');
 }
-
-/* ---------- issues ---------- */
 function issuesHtml(d){
-  if (!d.issues.length) return empty('Geen actuele issues — alle beheerde items zijn gezond.');
+  if (!d.issues.length) return empty('No current issues — all managed items are healthy.');
   return d.issues.map(i=>{
     const sev = i.classification==='PROVIDER_NO_MATCH' ? 'NO_MATCH' : 'RETRYING';
     const retry = i.next_retry_in_s!=null
-      ? `<span data-retry-until="${Date.now()+i.next_retry_in_s*1000}" data-retry-until-attr>retry over ${fmtIn(i.next_retry_in_s)}</span>`
-      : '';
+      ? `<span data-retry-until="${Date.now()+i.next_retry_in_s*1000}">retry in ${fmtIn(i.next_retry_in_s)}</span>` : '';
+    const id8 = i.item_id.slice(0,8);
+    const acts = `
+      <button class="act" onclick="runAction(event,'${i.item_id}','search',null,'#am-${id8}')">Search now</button>
+      <button class="act" onclick="runAction(event,'${i.item_id}','retry',null,'#am-${id8}')">Retry now</button>
+      <button class="act" onclick="askMagnet('${i.item_id}','#am-${id8}')">Add magnet</button>`;
     return `<div class="card"><h3>${esc(i.label)} ${badge(sev,sev)}</h3>
       <div>${esc(i.human)}</div>
-      ${i.candidate_count!=null?`<div class="muted" style="margin-top:4px">${i.candidate_count} candidates laatste poging${i.last_attempt_ago_s!=null?` · ${ago(Date.now()/1000-i.last_attempt_ago_s)}`:''}${i.next_retry_in_s!=null?` · ${retry}`:''}</div>`:''}
+      ${i.candidate_count!=null?`<div class="muted" style="margin-top:4px">${i.candidate_count} candidates last attempt${i.last_attempt_ago_s!=null?` · ${ago(Date.now()/1000-i.last_attempt_ago_s)}`:''}${i.next_retry_in_s!=null?` · ${retry}`:''}</div>`:''}
       ${i.rejects?.length?rejectBar(Object.fromEntries(i.rejects.map(r=>[r.key,r.n]))):''}
+      <div style="margin-top:6px">${acts}
+        <button class="act" onclick="openItem('${i.item_id}')">View trace</button></div>
+      <div id="am-${id8}"></div>
       <details><summary>Details &amp; trace</summary><div style="margin-top:8px">
-      <table><tr><th>Reden</th><th>Aantal</th><th>Groep</th></tr>${
+      <table><tr><th>Reason</th><th>Count</th><th>Group</th></tr>${
         i.rejects.map(r=>`<tr><td>${esc(r.human)}<div class="muted">${esc(r.key)}</div></td><td>${r.n}</td><td>${esc(r.group)}</td></tr>`).join('')}</table>
-      <a href="#" onclick="openItem('${i.item_id}');return false">→ volledige item-trace</a></div></details></div>`;}).join('');
+      </div></details></div>`;}).join('');
 }
-
-/* ---------- library ---------- */
 let libCache=[];
 async function loadLibrary(){
   await apiKeep('/api/items', items=>{
@@ -337,125 +352,117 @@ function renderLibrary(){
   const rows = libCache.filter(i =>
     (!st || i.status===st) &&
     (!q || (i.title||'').toLowerCase().includes(q) || (i.series||'').toLowerCase().includes(q)));
-  const html = `<tr><th>Item</th><th>Status</th><th>Identiteit</th><th>Gen</th><th></th></tr>` +
-    rows.slice(0,120).map(i=>`<tr>
+  const html = `<tr><th>Item</th><th>Status</th><th>Identity</th><th>Gen</th><th>Actions</th></tr>` +
+    rows.slice(0,120).map(i=>{
+      const id = i.id, id8 = id.slice(0,8);
+      const ready = i.status === 'READY';
+      const acts = ready
+        ? `<button class="act" onclick="runAction(event,'${id}','recheck',null)">Recheck</button>
+           <button class="act" onclick="runAction(event,'${id}','find-alternative',null)">Find another source</button>
+           <button class="act danger" onclick="askMarkBad('${id}')">Mark source bad</button>`
+        : `<button class="act" onclick="runAction(event,'${id}','search',null)">Search now</button>
+           <button class="act" onclick="runAction(event,'${id}','retry',null)">Retry now</button>`;
+      return `<tr>
       <td>${esc(i.series?`${i.series} S${String(i.season).padStart(2,'0')}E${String(i.episode).padStart(2,'0')}`:i.title)}
         <div class="muted">${esc(i.series?i.title:'')}</div></td>
       <td>${badge(i.status)}</td>
-      <td>${i.kind==='episode'?(i.show_imdb_id?badge('complete','SUCCESS'):badge('incompleet','WARNING')):badge('film','neutral')}</td>
+      <td>${i.kind==='episode'?(i.show_imdb_id?badge('complete','SUCCESS'):badge('incomplete','WARNING')):badge('movie','neutral')}</td>
       <td>${i.generation??0}</td>
-      <td><a href="#" onclick="openItem('${i.id}');return false">trace</a></td></tr>`).join('');
+      <td style="min-width:280px">${acts}
+        <button class="act" onclick="openItem('${id}')">Trace</button>
+        <div id="am-${id8}"></div></td></tr>`;}).join('');
   paintInto('#libtable','libtbl',html);
-  $('#libcount').textContent = `${rows.length} van ${libCache.length} items`;
+  $('#libcount').textContent = `${rows.length} of ${libCache.length} items`;
 }
-
-/* ---------- jobs ---------- */
 function jobsHtml(d){
-  if (!d.jobs.length) return empty('Geen jobs — alles is rustig. Health sweeps verschijnen hier zodra ze draaien.');
+  if (!d.jobs.length) return empty('No jobs — everything is quiet. Health sweeps appear here while they run.');
   const row = j=>{
-    const st = j.state==='SUCCESS'?'SUCCESS':j.state==='RUNNING'?'RUNNING':'RETRYING';
-    return `<tr><td>${esc(j.job_type)}</td><td>${badge(j.state,st)}</td>
-      <td style="min-width:150px">${j.progress_total?`<div class="progress"><i style="width:${pct(j)}%"></i></div><span class="muted">${j.progress_current??0}/${j.progress_total}${j.current_item?` · ${esc(j.current_item)}`:''}</span>`:'–'}</td>
+    const st = j.state==='SUCCESS'?'COMPLETED':j.state;
+    const eligible = j.progress_total!=null && j.progress_total===0 && j.state!=='RUNNING';
+    return `<tr><td>${esc(j.job_type)}</td><td>${badge(st,st==='COMPLETED'?'COMPLETED':st==='RUNNING'?'RUNNING':'RETRYING')}</td>
+      <td style="min-width:150px">${eligible?'<span class="muted">0 items eligible</span>':
+        j.progress_total?`<div class="progress"><i style="width:${pct(j)}%"></i></div><span class="muted">${j.progress_current??0}/${j.progress_total}${j.current_item?` · ${esc(j.current_item)}`:''}</span>`:'–'}</td>
       <td>${ago(j.last_run)}</td><td>${j.processed??'–'}</td><td>${j.changed??0}</td><td>${j.recovered??0}</td></tr>`; };
   return `<h2>Jobs</h2><div class="card tablewrap" style="padding:0"><table>
-    <tr><th>Job</th><th>Status</th><th>Voortgang</th><th>Laatste run</th><th>Verwerkt</th><th>Veranderd</th><th>Hersteld</th></tr>
+    <tr><th>Job</th><th>Status</th><th>Progress</th><th>Last run</th><th>Processed</th><th>Changed</th><th>Recovered</th></tr>
     ${d.jobs.map(row).join('')}</table></div>
-    <h2>Run-historie</h2><div class="card tablewrap" style="padding:0"><table>
-    <tr><th>Job</th><th>Start</th><th>Status</th><th>Duur</th><th>Verwerkt</th><th>Hersteld</th></tr>
+    <h2>Run history</h2><div class="card tablewrap" style="padding:0"><table>
+    <tr><th>Job</th><th>Started</th><th>Status</th><th>Duration</th><th>Processed</th><th>Recovered</th></tr>
     ${d.history.map(h=>`<tr><td>${esc(h.job_type)}</td><td>${ago(h.started_at)}</td>
-      <td>${badge(h.status,h.status==='SUCCESS'?'SUCCESS':h.status==='RUNNING'?'RUNNING':'RETRYING')}</td>
+      <td>${badge(h.status,h.status==='SUCCESS'?'COMPLETED':h.status==='RUNNING'?'RUNNING':'RETRYING')}</td>
       <td>${h.finished_at?`${Math.round(h.finished_at-h.started_at)}s`:'…'}</td>
       <td>${h.processed??'–'}</td><td>${h.recovered??0}</td></tr>`).join('')}</table></div>`;
 }
-
-/* ---------- providers ---------- */
 function providersHtml(d){
   return d.providers.map(p=>`
-    <div class="card"><h3>${esc(p.name)} ${badge(p.status,p.status==='HEALTHY'?'SUCCESS':'WARNING')}</h3>
-    <table><tr><th>Signaal (24u)</th><th>Waarde</th></tr>
-    <tr><td>Provider-retries</td><td>${p.retries}</td></tr>
+    <div class="card"><h3>${esc(p.name)} ${badge(p.status,p.status==='HEALTHY'?'SUCCESS':'WARNING')} <span class="muted">window: ${esc(p.window||'24h')}</span></h3>
+    <table><tr><th>Signal</th><th>Value</th></tr>
+    <tr><td>Provider retries</td><td>${p.retries}</td></tr>
     <tr><td>HTTP 400 / 429 / 5xx</td><td>${p.provider_400} / ${p.provider_429} / ${p.provider_5xx}</td></tr>
-    <tr><td>Niet-gereed (transient, komt terug)</td><td>${p.not_ready}</td></tr>
-    <tr><td>Candidate-failures (transient / permanent)</td><td>${p.transient} / ${p.permanent}</td></tr>
-    <tr><td>Add-budget per resolve (gemiddeld / limiet)</td><td>${p.avg_adds_per_resolve} / ${p.budget_limit}</td></tr></table></div>`).join('');
+    <tr><td>Not ready (transient, retried later)</td><td>${p.not_ready}</td></tr>
+    <tr><td>Candidate failures (transient / permanent)</td><td>${p.transient} / ${p.permanent}</td></tr>
+    <tr><td>Add budget per resolve (avg / limit)</td><td>${p.avg_adds_per_resolve??NA} / ${p.budget_limit}</td></tr></table></div>`).join('');
 }
-
-/* ---------- item detail ---------- */
 async function openItem(id){
   try{
     const t = await api(`/ops-media/${id}/trace`);
     const i = t.item;
+    const ready = i.status === 'READY';
+    const id8 = id.slice(0,8);
+    const acts = ready
+      ? `<button class="act" onclick="runAction(event,'${id}','recheck',null,'#idact-${id8}')">Recheck source</button>
+         <button class="act" onclick="runAction(event,'${id}','find-alternative',null,'#idact-${id8}')">Find alternative</button>
+         <button class="act danger" onclick="askMarkBad('${id}','#idact-${id8}')">Mark source bad</button>`
+      : `<button class="act" onclick="runAction(event,'${id}','search',null,'#idact-${id8}')">Search now</button>
+         <button class="act" onclick="runAction(event,'${id}','retry',null,'#idact-${id8}')">Retry now</button>
+         <button class="act" onclick="askMagnet('${id}','#idact-${id8}')">Add magnet</button>`;
     const steps = [
-      {l:'Plex-mapping', v:i.plex_path, ok:!!i.plex_path},
+      {l:'Plex mapping', v:i.plex_path, ok:!!i.plex_path},
       {l:'Resolver item', v:`${i.id.slice(0,8)} (gen ${i.generation})`, ok:true},
-      {l:'Current source', v:t.active_source?`${t.active_source.file_name} · ${(t.active_source.size/2**30).toFixed(2)} GB`:'geen', ok:!!t.active_source},
+      {l:'Current source', v:t.active_source?`${t.active_source.file_name} · ${(t.active_source.size/2**30).toFixed(2)} GB`:'none', ok:!!t.active_source},
     ];
     const dims = `
-      <tr><td>Identiteit</td><td>${i.kind==='episode' ? (i.show_imdb_id?badge('healthy','SUCCESS'):badge('incompleet','WARNING')) : badge('healthy','SUCCESS')}</td></tr>
-      <tr><td>Source</td><td>${t.active_source?badge('actief','SUCCESS'):badge(i.status==='NO_SOURCE'?'geen bruikbare':'geen', i.status==='NO_SOURCE'?'NO_SOURCE':'WARNING')}</td></tr>
-      <tr><td>Path</td><td>${i.plex_path?badge('geconfigureerd','SUCCESS'):badge('ontbreekt','FAILED')}</td></tr>
+      <tr><td>Identity</td><td>${i.kind==='episode' ? (i.show_imdb_id?badge('healthy','SUCCESS'):badge('incomplete','WARNING')) : badge('healthy','SUCCESS')}</td></tr>
+      <tr><td>Source</td><td>${t.active_source?badge('active','SUCCESS'):badge(i.status==='NO_SOURCE'?'no usable':'none', i.status==='NO_SOURCE'?'NO_SOURCE':'WARNING')}</td></tr>
+      <tr><td>Path</td><td>${i.plex_path?badge('configured','SUCCESS'):badge('missing','FAILED')}</td></tr>
       <tr><td>Delivery</td><td>${badge('not active','neutral')}</td></tr>`;
     $('#itembody').innerHTML = `
       <h3>${esc(i.series?`${i.series} S${String(i.season).padStart(2,'0')}E${String(i.episode).padStart(2,'0')} — `:'')}${esc(i.title||'')} ${badge(i.status)} <span class="muted">gen ${i.generation}</span></h3>
+      <div style="margin:6px 0">${acts}</div><div id="idact-${id8}"></div>
       <div class="grid cols">
-        <div class="card"><h3>Gezondheid per dimensie</h3><table>${dims}</table></div>
-        <div class="card"><h3>Pad-keten</h3><div class="chain">${steps.map(s=>
+        <div class="card"><h3>Health per dimension</h3><table>${dims}</table></div>
+        <div class="card"><h3>Path chain</h3><div class="chain">${steps.map(s=>
           `<span class="step ${s.ok?'ok':'bad'}">${s.ok?'✓':'✗'} ${s.l}: ${esc(s.v)}</span><span class="arrow">↓</span>`).join('')}
           <span class="step">provider (TorBox)</span></div>
           ${i.kind==='episode'?`<div class="muted" style="margin-top:6px">show ${esc(i.show_imdb_id||'–')} · episode ${esc(i.imdb_id||'–')}</div>`:''}</div>
       </div>
-      <h2>Candidate-trace laatste resolve</h2>
-      ${t.last_resolve.candidate_count!=null?`<div class="muted">${t.last_resolve.candidate_count} candidates · ${t.last_resolve.provider_adds??0} provider-adds</div>${rejectBar(t.last_resolve.rejects||{})}`:''}
-      <div class="tablewrap"><table><tr><th>#</th><th>Candidate</th><th>Resultaat</th></tr>
+      <h2>Candidate trace — last resolve</h2>
+      ${t.last_resolve.candidate_count!=null?`<div class="muted">${t.last_resolve.candidate_count} candidates · ${t.last_resolve.provider_adds??0} provider adds</div>${rejectBar(t.last_resolve.rejects||{})}`:''}
+      <div class="tablewrap"><table><tr><th>#</th><th>Candidate</th><th>Outcome</th></tr>
       ${t.last_resolve.candidates.map((c,n)=>`<tr><td>${n+1}</td><td class="mono" style="max-width:420px;overflow:hidden;text-overflow:ellipsis">${esc(c.name||c.hash||'?')}</td>
         <td>${c.result==='SELECTED'?badge('SELECTED','SUCCESS'):`<span class="muted">${esc(c.human||c.result)}</span>${c.error?`<div class="muted">${esc(c.error)}</div>`:''}`}</td></tr>`).join('')}</table></div>
-      <details><summary>Technische timeline</summary><div class="chain">${t.timeline.slice(-25).reverse().map(e=>
+      <details><summary>Technical timeline</summary><div class="chain">${t.timeline.slice(-25).reverse().map(e=>
         `<span class="step">${new Date(e.ts*1000).toLocaleTimeString()} · ${esc(e.kind)}</span>`).join('')}</div></details>`;
     $('#itemdlg').style.display='block';
-  }catch(e){ /* keep previous overlay state; toon status in live-indicator */
-    failures++; setLive(false); }
+  }catch(e){ failures++; setLive(false); }
 }
 function closeItem(){ $('#itemdlg').style.display='none'; }
-
-/* ---------- live/status ---------- */
 function setLive(on){
   $('#live').className = on?'':'off';
   if (on && !staleTick) $('#livetext').textContent = 'Live';
 }
-
-/* ---------- navigatie ---------- */
-document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('#nav button').forEach(x=>x.classList.remove('on'));
-  document.querySelectorAll('section').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on'); $('#s-'+b.dataset.s).classList.add('on');
-  onShown(b.dataset.s);
-});
-document.querySelectorAll('#actfilters button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('#actfilters button').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on'); actFilter=b.dataset.f; actPage=0; loadActivity();
-});
-$('#acthours').onchange = ()=>{ actPage=0; loadActivity(); };
-$('#actprev').onclick = ()=>{ if(actPage>0){actPage--;loadActivity();} };
-$('#actnext').onclick = ()=>{ actPage++; loadActivity(); };
-$('#libq').oninput = renderLibrary; $('#libstatus').onchange = renderLibrary;
-
-/* ---------- polling: cadans per datatype + visibility + dedupe ---------- */
 function refresh(sec){
   if(sec==='overview') apiKeep('/ops/dashboard', d=>{
     const h = overviewHtml(d);
     paintInto('#healthbanner','hb',h.banner); paintInto('#kpilib','kl',h.kpilib);
     paintInto('#kpiauto','ka',h.kpiauto); paintInto('#nowactive','na',h.now);
     paintInto('#wins','wi',h.wins); paintInto('#sweeperbox','sw',h.sweeper); });
-  if(sec==='activity') apiKeep(`/ops/activity?hours=${$('#acthours').value}&filter=${actFilter}&limit=15&offset=${actPage*15}`,
-    d=>{ $('#actpage').textContent = `${actPage*15+1}–${Math.min((actPage+1)*15,d.total)} van ${d.total}`;
-         paintInto('#activity','act', activityHtml(d)); });
   if(sec==='issues') apiKeep('/ops/issues', d=>paintInto('#issues','iss', issuesHtml(d)));
   if(sec==='jobs') apiKeep('/ops/jobs', d=>paintInto('#jobs','jobs', jobsHtml(d)));
   if(sec==='providers') apiKeep('/ops/providers/health', d=>paintInto('#providers','prov', providersHtml(d)));
   if(sec==='library') loadLibrary();
 }
-const cadence = {overview:5000, issues:8000, activity:15000, jobs:5000,
-                 providers:30000, library:30000};
+const cadence = {overview:5000, issues:8000, activity:15000, jobs:5000, providers:30000, library:30000};
 const lastPoll = {};
 function loop(sec){
   const now = Date.now();
@@ -463,23 +470,52 @@ function loop(sec){
   lastPoll[sec] = now; refresh(sec);
 }
 function onShown(sec){ lastPoll[sec]=0; loop(sec); }
+function loadActivity(){
+  apiKeep(`/ops/activity?hours=${$('#acthours').value}&filter=${actFilter}&limit=15&offset=${actPage*15}`,
+    d=>{ $('#actpage').textContent = `${actPage*15+1}–${Math.min((actPage+1)*15,d.total)} of ${d.total}`;
+         paintInto('#activity','act', activityHtml(d)); });
+}
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#nav button').forEach(x=>x.classList.remove('on'));
+  document.querySelectorAll('section').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); $('#s-'+b.dataset.s).classList.add('on');
+  history.replaceState(null, '', '#'+b.dataset.s);
+  onShown(b.dataset.s);
+});
+document.querySelectorAll('#actfilters button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#actfilters button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); actFilter=b.dataset.f; actPage=0;
+  history.replaceState(null, '', `#activity/${actFilter}`);
+  loadActivity();
+});
+$('#acthours').onchange = ()=>{ actPage=0; loadActivity(); };
+$('#actprev').onclick = ()=>{ if(actPage>0){actPage--;loadActivity();} };
+$('#actnext').onclick = ()=>{ actPage++; loadActivity(); };
+$('#libq').oninput = renderLibrary; $('#libstatus').onchange = renderLibrary;
 document.addEventListener('visibilitychange', ()=>{
   if (!document.hidden) for (const s of ['overview','issues','jobs','activity','library']) lastPoll[s]=0;
 });
 setInterval(()=>{
-  if (document.hidden) return;               // E2: geen load op verborgen tab
+  if (document.hidden) return;
   const sec = document.querySelector('section.on').id.replace('s-','');
   loop(sec);
   if (sec==='overview'){ loop('issues'); loop('jobs'); }
+  if (sec==='activity') loop('activity');
 }, 2000);
-onShown('overview'); loadLibrary();
-/* deeplink: #issues, #jobs, … of #item/<id> voor directe item-trace */
-(function(){
+function applyHash(){
   const h = location.hash.replace('#','');
   if (h.startsWith('item/')){ openItem(h.slice(5)); return; }
+  if (h.startsWith('activity/')){
+    document.querySelector('#nav button[data-s="activity"]').click();
+    const fb = document.querySelector(`#actfilters button[data-f="${h.split('/')[1]}"]`);
+    if (fb) fb.click();
+    return;
+  }
   const b = document.querySelector(`#nav button[data-s="${h}"]`);
   if (b) b.click();
-})();
+}
+onShown('overview'); loadLibrary();
+applyHash();
 </script>
 </body>
 </html>

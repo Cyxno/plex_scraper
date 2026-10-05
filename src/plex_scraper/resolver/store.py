@@ -373,9 +373,18 @@ class Store:
     async def job_finish(self, run_id: int, status: str = "SUCCESS",
                          **summary) -> None:
         def fn(c: sqlite3.Connection):
-            c.execute("UPDATE maintenance_runs SET status=?, finished_at=?, summary_json=? "
-                      "WHERE id=?",
-                      (status, m.now(), json.dumps(summary), run_id))
+            c.execute("""UPDATE maintenance_runs SET status=?, finished_at=?,
+                         summary_json=?,
+                         processed=COALESCE(?, processed),
+                         changed=COALESCE(?, changed),
+                         recovered=COALESCE(?, recovered),
+                         failed=COALESCE(?, failed),
+                         progress_current=COALESCE(?, progress_current)
+                         WHERE id=?""",
+                      (status, m.now(), json.dumps(summary),
+                       summary.get("processed"), summary.get("changed"),
+                       summary.get("recovered"), summary.get("failed"),
+                       summary.get("processed"), run_id))
         await self.run(fn)
 
     async def job_runs(self, job_type: str | None = None,

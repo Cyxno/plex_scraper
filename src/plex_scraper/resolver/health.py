@@ -531,7 +531,7 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                                 await self.resolver.store.job_finish(
                                     run_id, "DEFERRED", reason="playback_active",
                                     checks=checks, repairs=repairs,
-                                    recoveries=recoveries)
+                                    recoveries=recoveries, processed=checks)
                             except Exception:
                                 pass
                         return
@@ -602,7 +602,8 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                 await self.resolver.store.job_finish(
                     run_id, "SUCCESS", checks=checks, repairs=repairs,
                     upgrades=upgrades, recoveries=recoveries,
-                    shadow_switches=shadow_switches)
+                    shadow_switches=shadow_switches, processed=checks,
+                    changed=repairs, recovered=recoveries)
             except Exception:
                 pass
 
