@@ -116,7 +116,29 @@ class Store:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         with self._conn:
+            # B: read-resilience — WAL laat readers door tijdens schrijvers
+            # (een resolve mag het dashboard nooit laten hikken), plus een
+            # expliciete bounded busy_timeout i.p.v. alleen Pythons default.
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=5000")
             self._conn.executescript(_SCHEMA)
+            # S1: een startend proces heeft geen draaiende jobs — oude
+            # RUNNING-rijen zijn van een dood proces en nooit RUNNING blijven.
+            self._conn.execute(
+                "UPDATE maintenance_runs SET status='INTERRUPTED' "
+                "WHERE status='RUNNING' AND finished_at IS NULL")
+            # T: retention — candidate-detail events korter dan samenvattingen;
+            # maintenance-runs het langst. Eén keer per processtart, begrensd.
+            self._conn.execute(
+                "DELETE FROM events WHERE kind IN ('candidate_failed',"
+                "'candidate_identity_rejected','candidate_pre_gate_rejected',"
+                "'candidate_file_choice_rejected','resolution_skip_uncached') "
+                "AND ts < ?", (m.now() - 7 * 86400,))
+            self._conn.execute(
+                "DELETE FROM events WHERE ts < ?", (m.now() - 30 * 86400,))
+            self._conn.execute(
+                "DELETE FROM maintenance_runs WHERE started_at < ?",
+                (m.now() - 90 * 86400,))
             # migrate: media-bitrate kolommen (adaptive-throughput fase)
             for col, ddl in (("duration_s", "ALTER TABLE media_items ADD COLUMN duration_s REAL"),
                              ("media_bitrate_mbit", "ALTER TABLE media_items ADD COLUMN media_bitrate_mbit REAL"),

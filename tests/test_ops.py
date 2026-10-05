@@ -141,3 +141,69 @@ async def test_job_runs_persist_and_list(settings):
     assert runs[0]["id"] == rid and runs[0]["status"] == "SUCCESS"
     assert runs[0]["processed"] == 5 and runs[0]["recovered"] == 1
     assert runs[0]["summary_json"].get("checks") == 10
+
+
+# --- B/C: LKG / stale / false-zero -------------------------------------------
+
+async def test_dashboard_stale_fallback_on_db_error(settings, scorer, got_item, monkeypatch):
+    """SQLite-busy -> laatste bekende goede payload met stale:true; geen
+    false-zero (READY=0 / issues=0)."""
+    client, engine = _client(settings, scorer, got_item)
+    await engine.register_item(dict(got_item))
+    first = client.get("/api/dashboard").json()
+    assert first["library"]["ready"] == 1 and first["stale"] is False
+    assert "generated_at" in first
+
+    async def boom():
+        raise RuntimeError("database is locked")
+    monkeypatch.setattr(engine.store, "list_items", boom)
+    second = client.get("/api/dashboard").json()
+    assert second["stale"] is True
+    assert second["library"]["ready"] == 1          # geen false zero
+    assert "database is locked" in second["degraded"]
+
+
+async def test_issues_endpoint_envelope(settings, scorer, got_item):
+    client, engine = _client(settings, scorer, got_item)
+    await engine.register_item(dict(got_item))
+    d = client.get("/api/issues").json()
+    assert d["stale"] is False and "generated_at" in d
+
+
+# --- S: maintenance-run robustness -------------------------------------------
+
+async def test_interrupted_runs_reconciled_at_startup(settings):
+    """Een proces dat sterft laat nooit eeuwig RUNNING achter: bij de
+    volgende Store-open worden RUNNING-rijen INTERRUPTED."""
+    from plex_scraper.resolver.store import Store
+    db = str(settings.db_path)
+    store = Store(db)
+    rid = await store.job_start("health_sweeper", progress_total=5)
+    runs = await store.job_runs()
+    assert runs[0]["status"] == "RUNNING"
+    reopened = Store(db)                    # "herstart" (nieuw proces)
+    runs = await reopened.job_runs()
+    assert runs[0]["status"] == "INTERRUPTED"
+
+
+async def test_retention_prunes_old_events(settings):
+    """Events ouder dan 30 dagen worden bij start verwijderd; samenvattingen
+    blijven binnen het venster gewoon bestaan."""
+    import asyncio
+    from plex_scraper.resolver.store import Store
+    from plex_scraper.common.domain import models as m
+    db = str(settings.db_path)
+    store = Store(db)
+    old = m.now() - 40 * 86400
+    def seed(c):
+        c.execute("INSERT INTO events (ts,kind,payload) VALUES (?,?,?)",
+                  (old, "candidate_failed", "{}"))
+        c.execute("INSERT INTO events (ts,kind,payload) VALUES (?,?,?)",
+                  (m.now() - 1, "resolution_succeeded", "{}"))
+    await store.run(seed)
+    Store(db)                               # herstart triggert retention
+    def count(c):
+        return (c.execute("SELECT count(*) FROM events WHERE kind='candidate_failed'").fetchone()[0],
+                c.execute("SELECT count(*) FROM events WHERE kind='resolution_succeeded'").fetchone()[0])
+    n_bad, n_ok = await store.run(count)
+    assert n_bad == 0 and n_ok == 1

@@ -500,15 +500,17 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                 "health_sweeper", progress_total=len(batch))
         except Exception:
             pass
+        last_progress_write = 0.0
         for item in batch:
-            if run_id is not None:
-                try:
+            if run_id is not None and time.time() - last_progress_write >= 5.0:
+                try:                        # S2: begrensde schrijfcadans
                     label = getattr(item, "series", None) or getattr(item, "title", "") \
                         or item.plex_path
                     await self.resolver.store.job_progress(
                         run_id, processed=checks, changed=repairs,
                         recovered=recoveries, current_item=str(label)[:80],
                         progress_current=checks)
+                    last_progress_write = time.time()
                 except Exception:
                     pass
             plex_path = item.plex_path

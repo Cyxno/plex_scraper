@@ -15,7 +15,9 @@
 body{margin:0;background:var(--bg);color:var(--text);
   font:14px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
 a{color:var(--accent);text-decoration:none}
-header{display:flex;align-items:center;gap:14px;padding:10px 18px;
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{
+  outline:2px solid var(--accent);outline-offset:1px}
+header{display:flex;align-items:center;gap:10px;padding:8px 18px;
   background:var(--panel);border-bottom:1px solid var(--border);
   position:sticky;top:0;z-index:5;flex-wrap:wrap}
 header h1{font-size:15px;margin:0;font-weight:600}
@@ -27,47 +29,44 @@ nav button.on{color:var(--text);background:var(--panel2);font-weight:600}
 #live{margin-left:auto;font-size:12px;color:var(--muted);display:flex;
   align-items:center;gap:6px}
 #live .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
-#live.off .dot{background:var(--err)}
-main{padding:16px 18px;max-width:1280px;margin:0 auto}
+#live.off .dot{background:var(--warn)}
+main{padding:14px 18px;max-width:1280px;margin:0 auto}
 section{display:none}
 section.on{display:block}
-h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--muted);margin:20px 0 8px}
-.banner{padding:10px 14px;border-radius:8px;font-weight:600;margin:4px 0 14px;
-  border:1px solid var(--border);display:flex;align-items:center;gap:10px}
-.banner.HEALTHY{border-color:var(--ok);color:var(--ok)}
-.banner.DEGRADED{border-color:var(--warn);color:var(--warn)}
-.banner.ATTENTION{border-color:var(--warn);color:var(--warn)}
-.banner.ERROR{border-color:var(--err);color:var(--err)}
-.grid{display:grid;gap:10px}
-.kpis{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--muted);margin:16px 0 6px}
+.banner{padding:8px 14px;border-radius:8px;font-weight:600;margin:2px 0 12px;
+  border:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:13px}
+.banner.HEALTHY{border-color:var(--ok)} .banner.HEALTHY .h{color:var(--ok)}
+.banner.DEGRADED,.banner.ATTENTION{border-color:var(--warn)}
+.banner.DEGRADED .h,.banner.ATTENTION .h{color:var(--warn)}
+.banner.ERROR{border-color:var(--err)} .banner.ERROR .h{color:var(--err)}
+.grid{display:grid;gap:8px}
+.kpis{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
 .kpi{background:var(--panel);border:1px solid var(--border);border-radius:8px;
-  padding:10px 12px}
-.kpi .n{font-size:22px;font-weight:700}
-.kpi .l{font-size:12px;color:var(--muted)}
+  padding:8px 11px}
+.kpi .n{font-size:20px;font-weight:700}
+.kpi .l{font-size:11.5px;color:var(--muted)}
 .kpi.ok .n{color:var(--ok)} .kpi.err .n{color:var(--err)}
-.kpi.warn .n{color:var(--warn)}
+.kpi.warn .n{color:var(--warn)} .kpi.run .n{color:var(--run)}
 .cols{grid-template-columns:1fr 1fr}
 @media(max-width:900px){.cols{grid-template-columns:1fr}}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;
-  padding:12px 14px;margin-bottom:10px}
-.card h3{margin:0 0 6px;font-size:14px}
+  padding:10px 13px;margin-bottom:8px}
+.card h3{margin:0 0 4px;font-size:13.5px}
 .muted{color:var(--muted);font-size:12px}
 .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;
   font-weight:600;border:1px solid}
-.b-SUCCESS{color:var(--ok);border-color:var(--ok)}
-.b-READY{color:var(--ok);border-color:var(--ok)}
+.b-SUCCESS,.b-READY,.b-RECOVERED{color:var(--ok);border-color:var(--ok)}
 .b-FAILED,.b-NO_SOURCE,.b-ERROR{color:var(--err);border-color:var(--err)}
 .b-WARNING,.b-ATTENTION,.b-DEGRADED{color:var(--warn);border-color:var(--warn)}
 .b-RUNNING,.b-RESOLVING{color:var(--run);border-color:var(--run)}
-.b-RETRYING,.b-DEFERRED{color:var(--retry);border-color:var(--retry)}
-.b-NO_MATCH{color:var(--muted);border-color:var(--muted)}
-.b-RECOVERED{color:var(--ok);border-color:var(--ok)}
-.b-neutral{color:var(--muted);border-color:var(--border)}
+.b-RETRYING,.b-DEFERRED,.b-INTERRUPTED{color:var(--retry);border-color:var(--retry)}
+.b-NO_MATCH,.b-neutral,.b-INFO{color:var(--muted);border-color:var(--border)}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{color:var(--muted);text-align:left;font-size:11px;text-transform:uppercase;
-  letter-spacing:.06em;padding:6px 8px;border-bottom:1px solid var(--border)}
-td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+  letter-spacing:.06em;padding:5px 8px;border-bottom:1px solid var(--border)}
+td{padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:top}
 tr:hover td{background:var(--panel2)}
 .filters{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
 .filters button,.filters select{background:var(--panel);color:var(--muted);
@@ -76,49 +75,54 @@ tr:hover td{background:var(--panel2)}
 .filters button.on{color:var(--text);border-color:var(--accent)}
 input[type=search]{background:var(--panel);color:var(--text);
   border:1px solid var(--border);border-radius:6px;padding:6px 10px;
-  font:inherit;font-size:13px;min-width:200px}
-.progress{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden}
-.progress i{display:block;height:100%;background:var(--accent)}
-.empty{padding:26px;text-align:center;color:var(--muted)}
-.chain{font-family:var(--mono);font-size:12px;line-height:2}
+  font:inherit;font-size:13px;min-width:180px}
+.progress{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden;
+  margin-top:3px}
+.progress i{display:block;height:100%;background:var(--accent);transition:width .6s}
+.empty{padding:20px;text-align:center;color:var(--muted)}
+.chain{font-family:var(--mono);font-size:12px;line-height:1.9}
 .chain .step{display:block;padding:2px 8px;border-left:2px solid var(--border)}
 .chain .ok{border-color:var(--ok)} .chain .bad{border-color:var(--err)}
 .arrow{color:var(--muted);padding-left:14px}
-details{margin-top:6px}
+details{margin-top:5px}
 summary{cursor:pointer;color:var(--accent);font-size:12px}
-.pager{display:flex;gap:8px;align-items:center;margin:10px 0}
+.pager{display:flex;gap:8px;align-items:center;margin:8px 0}
 .pager button{background:var(--panel);color:var(--text);
   border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer}
-.bar{display:flex;gap:3px;flex-wrap:wrap}
+.bar{display:flex;gap:3px;flex-wrap:wrap;margin-top:4px}
 .bar span{padding:1px 7px;border-radius:8px;font-size:11px;
   border:1px solid var(--border);color:var(--muted)}
 .bar b{color:var(--text)}
 #itemdlg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;
   overflow:auto;z-index:10}
-#itemdlg .inner{background:var(--bg);max-width:980px;margin:30px auto;
-  border:1px solid var(--border);border-radius:10px;padding:18px}
+#itemdlg .inner{background:var(--bg);max-width:980px;margin:24px auto;
+  border:1px solid var(--border);border-radius:10px;padding:16px}
+@media(max-width:640px){#itemdlg .inner{margin:0;border-radius:0;min-height:100vh}
+  .kpis{grid-template-columns:1fr 1fr}
+  .tablewrap{overflow-x:auto}}
+@media(prefers-reduced-motion:reduce){.progress i{transition:none}}
 </style>
 </head>
 <body>
 <header>
   <h1>🛰 plex_scraper cockpit</h1>
   <nav id="nav">
-    <button data-s="overview" class="on">Overview</button>
-    <button data-s="activity">Activity</button>
-    <button data-s="issues">Issues</button>
-    <button data-s="library">Library</button>
-    <button data-s="jobs">Jobs</button>
-    <button data-s="providers">Providers</button>
+    <button data-s="overview" class="on" aria-label="Overview">Overview</button>
+    <button data-s="activity" aria-label="Activity">Activity</button>
+    <button data-s="issues" aria-label="Issues">Issues</button>
+    <button data-s="library" aria-label="Library">Library</button>
+    <button data-s="jobs" aria-label="Jobs">Jobs</button>
+    <button data-s="providers" aria-label="Providers">Providers</button>
   </nav>
-  <div id="live"><span class="dot"></span><span id="livetext">Live</span></div>
+  <div id="live" role="status" aria-live="polite"><span class="dot"></span><span id="livetext">Live</span></div>
 </header>
 <main>
 
 <section id="s-overview" class="on">
-  <div id="healthbanner" class="banner">laden…</div>
+  <div id="healthbanner" class="banner" aria-live="polite"><span class="muted">laden…</span></div>
   <h2>Library</h2><div id="kpilib" class="grid kpis"></div>
-  <h2>Playback &amp; automation</h2><div id="kpiauto" class="grid kpis"></div>
-  <div class="grid cols" style="margin-top:12px">
+  <h2>Automation &amp; providers</h2><div id="kpiauto" class="grid kpis"></div>
+  <div class="grid cols" style="margin-top:10px">
     <div><h2>Nu actief</h2><div id="nowactive"></div></div>
     <div><h2>Recent automatisch hersteld</h2><div id="wins"></div></div>
   </div>
@@ -134,22 +138,22 @@ summary{cursor:pointer;color:var(--accent);font-size:12px}
     <button data-f="sweeper">Sweeper</button>
     <button data-f="playback">Playback</button>
     <button data-f="provider">Provider</button>
-    <select id="acthours"><option value="1">1u</option>
+    <select id="acthours" aria-label="Tijdvenster"><option value="1">1u</option>
       <option value="24" selected>24u</option><option value="168">7d</option></select>
   </div>
   <div id="activity"></div>
-  <div class="pager"><button id="actprev">←</button><span id="actpage" class="muted"></span><button id="actnext">→</button></div>
+  <div class="pager"><button id="actprev" aria-label="Vorige pagina">←</button><span id="actpage" class="muted"></span><button id="actnext" aria-label="Volgende pagina">→</button></div>
 </section>
 
 <section id="s-issues"><div id="issues"></div></section>
 
 <section id="s-library">
-  <div class="filters"><input id="libq" type="search" placeholder="Zoek titel/serie…">
-    <select id="libstatus"><option value="">Alle statuses</option>
+  <div class="filters"><input id="libq" type="search" placeholder="Zoek titel/serie…" aria-label="Zoeken">
+    <select id="libstatus" aria-label="Statusfilter"><option value="">Alle statuses</option>
       <option>READY</option><option>NO_SOURCE</option><option>RESOLVING</option>
       <option>CANDIDATE_VALIDATION</option><option>SOURCE_FAILED</option></select>
   </div>
-  <div class="card" style="padding:0"><table id="libtable"></table></div>
+  <div class="card tablewrap" style="padding:0"><table id="libtable"></table></div>
   <div class="muted" id="libcount"></div>
 </section>
 
@@ -157,7 +161,7 @@ summary{cursor:pointer;color:var(--accent);font-size:12px}
 <section id="s-providers"><div id="providers"></div></section>
 </main>
 
-<div id="itemdlg"><div class="inner"><div id="itembody"></div>
+<div id="itemdlg" role="dialog" aria-modal="true"><div class="inner"><div id="itembody"></div>
 <p style="text-align:right;margin-bottom:0"><a href="#" onclick="closeItem();return false">sluiten</a></p></div></div>
 
 <script>
@@ -167,103 +171,143 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 const ago = ts => { const d = Math.round(Date.now()/1000 - ts);
   if (d < 60) return `${d}s geleden`; if (d < 3600) return `${Math.round(d/60)}m geleden`;
   if (d < 86400) return `${Math.round(d/3600)}u geleden`; return `${Math.round(d/86400)}d geleden`; };
-const inim = s => s == null ? '–' : (s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s/60)}m` : `${Math.round(s/3600)}u`);
-let pollTimer = null, failures = 0;
-
-async function api(path){ const r = await fetch(path); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+const fmtIn = s => s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s/60)}m` : `${Math.round(s/3600)}u`;
 const badge = (t,c)=>`<span class="badge b-${esc(c||t)}">${esc(t)}</span>`;
+let failures = 0;
 
-/* ---------- overview ---------- */
-async function loadOverview(){
+/* ---------- api: dedupe + stale-preserving (B6/G2/E3) ---------- */
+const lastGood = {}; const inflight = {};
+async function api(path){
+  if (inflight[path]) throw new Error('busy');
+  inflight[path] = true;
   try{
-    const d = await api('/ops/dashboard');
+    const r = await fetch(path, {cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data = await r.json();
+    lastGood[path] = {t: Date.now(), data};
     failures = 0; setLive(true);
-    $('#healthbanner').className = 'banner ' + d.health;
-    $('#healthbanner').innerHTML = badge(d.health, d.health === 'HEALTHY' ? 'SUCCESS' : d.health) +
-      `<span style="color:var(--text)">${{HEALTHY:'Systeem gezond',DEGRADED:'Verminderd — onderdelen hebben aandacht nodig',
-        ATTENTION:'Aandacht — er zijn problematische items',ERROR:'Fout'}[d.health]||d.health}</span>`;
-    const L = d.library;
-    $('#kpilib').innerHTML = kpi(L.ready,'READY','ok') + kpi(L.resolving,'resolving','run')
-      + kpi(L.no_source,'NO_SOURCE',L.no_source?'err':'ok')
-      + kpi(L.identity_incomplete,'identity incomplete',L.identity_incomplete?'warn':'ok')
-      + kpi(L.total,'totaal');
-    $('#kpiauto').innerHTML = kpi(d.playback.active,'actieve streams',d.playback.active?'run':'')
-      + kpi(d.provider.candidate_failures,'candidate-failures 24u')
-      + kpi(d.provider.transient,'transient 24u','warn')
-      + kpi(d.provider.retries,'provider-retries 24u')
-      + kpi(d.issues.no_source,'issues',d.issues.no_source?'err':'ok');
-    $('#nowactive').innerHTML = d.now.resolving.length || d.now.jobs_running.length
-      ? d.now.resolving.map(r=>card(esc(r.label),'Resolving',badge('RUNNING')))
-        + d.now.jobs_running.map(j=>card(esc(j.job_type)+(j.current_item?` — ${esc(j.current_item)}`:''),
-          `job ${j.progress_current??'?'} / ${j.progress_total??'?'}`,
-          `<div class="progress"><i style="width:${pct(j)}%"></i></div>`)).join('')
-      : empty('Idle — geen actieve resolvers of jobs.');
-    $('#wins').innerHTML = d.recent_wins.length ? d.recent_wins.map(w=>card(esc(w.label),
-      `NO_SOURCE → READY${w.file?`<br><span class=muted>${esc(w.file)}</span>`:''}`,
-      badge('RECOVERED') + ` <span class="muted">${ago(w.ts=Date.now()/1000-w.ago_s)}</span>`)).join('')
-      : empty('Geen automatische herstels in de laatste 24u.');
-    const sw = (d.sweeper.last_runs||[])[0];
-    $('#sweeperbox').innerHTML = sw ? card('Health sweeper',
-      `laatste run: ${sw.processed??'?'} items, ${sw.recovered??0} hersteld · ${ago(sw.finished_at||sw.started_at)}`,
-      badge(sw.status==='SUCCESS'?'SUCCESS':sw.status, sw.status==='SUCCESS'?'SUCCESS':'RETRYING')) 
-      : empty('Nog geen sweeper-runs vastgelegd.');
-  }catch(e){ failures++; setLive(false); }
+    return data;
+  } finally { delete inflight[path]; }
+}
+async function apiKeep(path, render){
+  try{ render(await api(path)); markFresh(); }
+  catch(e){
+    if (e.message === 'busy') return;
+    failures++; setLive(false);            // render NIET leegmaken (R)
+    const lg = lastGood[path];
+    if (lg) markStale(lg.t);
+  }
+}
+let staleTick = null;
+function markStale(t){
+  if (staleTick) clearInterval(staleTick);
+  const upd = ()=>{ $('#livetext').textContent =
+    `Bijwerken… (data ${Math.round((Date.now()-t)/1000)}s oud)`; };
+  upd(); staleTick = setInterval(upd, 1000);
+}
+function markFresh(){ if (staleTick){ clearInterval(staleTick); staleTick = null; } }
+
+/* G3: geen flikker — alleen DOM vervangen bij échte verandering */
+const rendered = {};
+function paintInto(sel, key, html){
+  if (rendered[key] === html) return;
+  rendered[key] = html; $(sel).innerHTML = html;
 }
 const kpi = (n,l,cls='')=>`<div class="kpi ${cls}"><div class="n">${n??'–'}</div><div class="l">${l}</div></div>`;
 const card = (t,sub,right)=>`<div class="card"><h3>${t} <span style="float:right">${right||''}</span></h3><div>${sub||''}</div></div>`;
 const empty = t=>`<div class="empty">${t}</div>`;
-const pct = j => j.progress_total ? Math.round((j.progress_current||0)/j.progress_total*100) : 0;
+const pct = j => j.progress_total ? Math.min(99, Math.round((j.progress_current||0)/j.progress_total*100)) : 0;
+function rejectBar(rej){
+  if (!rej || !Object.keys(rej).length) return '';
+  return `<div class="bar">${Object.entries(rej).map(([k,v])=>
+    `<span>${esc(REJHUMAN[k]||k)} <b>${v}</b></span>`).join('')}</div>`;
+}
+const REJHUMAN = {
+  identity_wrong_show:'verkeerde serie', identity_pack_missing_episode:'aflevering niet in pack',
+  identity_wrong_movie:'verkeerde film', identity_wrong_year:'verkeerd jaar',
+  pre_gate_size:'te klein (vooraf)', budget_exhausted:'niet geprobeerd (budget op)',
+  file_too_small:'bestand te klein', torrent_no_files:'geen bestanden',
+  provider_400:'provider weigerde (400)', provider_429:'rate limited',
+  provider_5xx:'provider-storing', torrent_not_ready:'nog niet gereed',
+  first_byte_empty:'geen eerste byte', range_failed:'lees-probe faalt',
+  backend_unavailable:'backend onbereikbaar', provider_add_failed:'toevoegen faalt',
+  unknown_probe_failure:'onbekend', bad_ttl:'recent mislukt, tijdelijk overgeslagen',
+  no_candidates:'geen candidates'};
+
+/* ---------- overview ---------- */
+function overviewHtml(d){
+  const L = d.library;
+  const cause = d.issues.no_source ? `${d.issues.no_source} items vereisen aandacht`
+    : L.identity_incomplete ? `${L.identity_incomplete} items identiteit incompleet`
+    : 'alle beheerde items gezond';
+  const banner = badge(d.health, d.health==='HEALTHY'?'SUCCESS':d.health)
+    + `<span class="h">${{HEALTHY:'Systeem gezond',DEGRADED:'Verminderd',ATTENTION:'Aandacht',ERROR:'Fout'}[d.health]||d.health}</span>`
+    + `<span class="muted" style="font-weight:400">— ${cause}</span>`;
+  const kpilib = kpi(L.ready,'READY','ok') + kpi(L.resolving,'resolving',L.resolving?'run':'')
+    + kpi(L.no_source,'issues',L.no_source?'err':'ok')
+    + kpi(L.identity_incomplete,'identiteit incompleet',L.identity_incomplete?'warn':'ok')
+    + kpi(L.total,'totaal');
+  const kpiauto = kpi(d.playback.active,'actieve streams',d.playback.active?'run':'')
+    + kpi(d.provider.candidate_failures,'candidate-failures 24u')
+    + kpi(d.provider.transient,'transient 24u',d.provider.transient?'warn':'')
+    + kpi((d.sweeper.last_runs||[]).reduce((a,r)=>a+(r.recovered||0),0),'hersteld (sweeper)','ok')
+    + kpi(d.provider.retries,'provider-retries 24u');
+  const now = (d.now.resolving.length || d.now.jobs_running.length)
+    ? d.now.resolving.map(r=>card(esc(r.label),'Resolving',badge('RUNNING'))).join('')
+      + d.now.jobs_running.map(j=>card(esc(j.job_type)+(j.current_item?` — ${esc(j.current_item)}`:''),
+        `job ${j.progress_current??'?'} / ${j.progress_total??'?'}`,
+        `<div class="progress"><i style="width:${pct(j)}%"></i></div>`)).join('')
+    : empty('Idle — geen actieve resolvers of jobs.');
+  const wins = d.recent_wins.length ? d.recent_wins.map(w=>
+    card(esc(w.label), `NO_SOURCE → READY${w.file?`<div class="muted">${esc(w.file)}</div>`:''}`,
+      `${badge('RECOVERED')} <span class="muted">${ago(Date.now()/1000-w.ago_s)}</span>`)).join('')
+    : empty('Geen automatische herstels in de laatste 24u.');
+  const sw = (d.sweeper.last_runs||[])[0];
+  const sweeper = sw ? card('Health sweeper',
+    `${sw.processed??'?'} items verwerkt, ${sw.recovered||0} hersteld · ${ago(sw.finished_at||sw.started_at)}`,
+    badge(sw.status==='SUCCESS'?'SUCCESS':sw.status, sw.status==='SUCCESS'?'SUCCESS':'RETRYING'))
+    : empty('Nog geen sweeper-runs vastgelegd.');
+  return {banner, kpilib, kpiauto, now, wins, sweeper};
+}
 
 /* ---------- activity ---------- */
 let actFilter='all', actPage=0;
-async function loadActivity(){
-  try{
-    const d = await api(`/ops/activity?hours=${$('#acthours').value}&filter=${actFilter}&limit=15&offset=${actPage*15}`);
-    $('#actpage').textContent = `${actPage*15+1}–${Math.min((actPage+1)*15,d.total)} van ${d.total}`;
-    $('#activity').innerHTML = d.cards.length ? d.cards.map(c=>{
-      const st = {SUCCESS:'SUCCESS',FAILED:'FAILED',RUNNING:'RUNNING'}[c.outcome]||'NEUTRAL';
-      return `<div class="card"><h3>${esc(c.op)} — ${esc(c.item?.label||'?')}
-        <span style="float:right">${badge(st==='NEUTRAL'?'INFO':st,st)} <span class="muted">${ago(c.ts)}</span></span></h3>
-        <div>${esc(c.detail||'')}${c.candidate_count?` · ${c.candidate_count} candidates`:''}
-        ${c.duration_s?` · ${c.duration_s}s`:''}</div>
-        ${c.rejects?rejectBar(c.rejects):''}</div>`;}).join('')
-      : empty('Geen activiteit in dit filter/time-window.');
-  }catch(e){ setLive(false); }
-}
-function rejectBar(rej){
-  const hum = {identity_wrong_show:'verkeerde serie',identity_pack_missing_episode:'aflevering niet in pack',
-    identity_wrong_movie:'verkeerde film',pre_gate_size:'te klein',budget_exhausted:'budget op',
-    file_too_small:'te klein',torrent_no_files:'geen files',provider_400:'TorBox 400',
-    torrent_not_ready:'nog niet ready',range_failed:'range faalt',first_byte_empty:'geen eerste byte',
-    backend_unavailable:'backend down',unknown_probe_failure:'onbekend',bad_ttl:'TTL'};
-  return `<div class="bar">${Object.entries(rej).map(([k,v])=>`<span>${hum[k]||k} <b>${v}</b></span>`).join('')}</div>`;
+function activityHtml(d){
+  if (!d.cards.length) return empty('Geen activiteit in dit filter/time-window.');
+  return d.cards.map(c=>{
+    const st = {SUCCESS:'SUCCESS',FAILED:'FAILED',RUNNING:'RUNNING'}[c.outcome]||'INFO';
+    return `<div class="card"><h3>${esc(c.op)} — ${esc(c.item?.label||'?')}
+      <span style="float:right">${badge(st,st)} <span class="muted">${ago(c.ts)}</span></span></h3>
+      <div>${esc(c.detail||'')}${c.candidate_count?` · ${c.candidate_count} candidates`:''}
+      ${c.duration_s?` · ${c.duration_s}s`:''}</div>
+      ${c.rejects?rejectBar(c.rejects):''}</div>`;}).join('');
 }
 
 /* ---------- issues ---------- */
-async function loadIssues(){
-  try{
-    const d = await api('/ops/issues');
-    $('#issues').innerHTML = d.issues.length ? d.issues.map(i=>`
-      <div class="card"><h3>${esc(i.label)} ${badge(i.classification==='PROVIDER_NO_MATCH'?'NO_MATCH':'RETRYING',i.classification==='PROVIDER_NO_MATCH'?'NO_MATCH':'RETRYING')}</h3>
+function issuesHtml(d){
+  if (!d.issues.length) return empty('Geen actuele issues — alle beheerde items zijn gezond.');
+  return d.issues.map(i=>{
+    const sev = i.classification==='PROVIDER_NO_MATCH' ? 'NO_MATCH' : 'RETRYING';
+    const retry = i.next_retry_in_s!=null
+      ? `<span data-retry-until="${Date.now()+i.next_retry_in_s*1000}" data-retry-until-attr>retry over ${fmtIn(i.next_retry_in_s)}</span>`
+      : '';
+    return `<div class="card"><h3>${esc(i.label)} ${badge(sev,sev)}</h3>
       <div>${esc(i.human)}</div>
-      ${i.candidate_count!=null?`<div class="muted" style="margin-top:4px">${i.candidate_count} candidates laatste poging${i.last_attempt_ago_s!=null?` · ${ago(Date.now()/1000-i.last_attempt_ago_s)}`:''}${i.next_retry_in_s!=null?` · retry over ${inim(i.next_retry_in_s)}`:''}</div>`:''}
+      ${i.candidate_count!=null?`<div class="muted" style="margin-top:4px">${i.candidate_count} candidates laatste poging${i.last_attempt_ago_s!=null?` · ${ago(Date.now()/1000-i.last_attempt_ago_s)}`:''}${i.next_retry_in_s!=null?` · ${retry}`:''}</div>`:''}
       ${i.rejects?.length?rejectBar(Object.fromEntries(i.rejects.map(r=>[r.key,r.n]))):''}
-      <details><summary>Details &amp; trace</summary><div style="margin-top:8px">${rejectList(i.rejects)}
-      <a href="#" onclick="openItem('${i.item_id}');return false">→ volledige item-trace</a></div></details></div>`).join('')
-      : empty('Geen actuele issues — alle beheerde items zijn gezond.');
-  }catch(e){ setLive(false); }
+      <details><summary>Details &amp; trace</summary><div style="margin-top:8px">
+      <table><tr><th>Reden</th><th>Aantal</th><th>Groep</th></tr>${
+        i.rejects.map(r=>`<tr><td>${esc(r.human)}<div class="muted">${esc(r.key)}</div></td><td>${r.n}</td><td>${esc(r.group)}</td></tr>`).join('')}</table>
+      <a href="#" onclick="openItem('${i.item_id}');return false">→ volledige item-trace</a></div></details></div>`;}).join('');
 }
-const rejectList = rej => !rej?.length ? '' : `<table><tr><th>Reden</th><th>Aantal</th><th>Groep</th></tr>${
-  rej.map(r=>`<tr><td>${esc(r.human)}</td><td>${r.n}</td><td>${esc(r.group)}</td></tr>`).join('')}</table>`;
 
 /* ---------- library ---------- */
 let libCache=[];
 async function loadLibrary(){
-  try{
-    const items = await api('/api/items');
+  await apiKeep('/api/items', items=>{
     libCache = Array.isArray(items) ? items : items.items || [];
     renderLibrary();
-  }catch(e){ setLive(false); }
+  });
 }
 function renderLibrary(){
   const q = ($('#libq').value||'').toLowerCase();
@@ -271,47 +315,47 @@ function renderLibrary(){
   const rows = libCache.filter(i =>
     (!st || i.status===st) &&
     (!q || (i.title||'').toLowerCase().includes(q) || (i.series||'').toLowerCase().includes(q)));
-  $('#libcount').textContent = `${rows.length} van ${libCache.length} items`;
-  $('#libtable').innerHTML = `<tr><th>Item</th><th>Status</th><th>Identiteit</th><th>Gen</th><th></th></tr>` +
+  const html = `<tr><th>Item</th><th>Status</th><th>Identiteit</th><th>Gen</th><th></th></tr>` +
     rows.slice(0,120).map(i=>`<tr>
       <td>${esc(i.series?`${i.series} S${String(i.season).padStart(2,'0')}E${String(i.episode).padStart(2,'0')}`:i.title)}
-        <div class="muted">${esc(i.title!=null&&i.series?i.title:'')}</div></td>
+        <div class="muted">${esc(i.series?i.title:'')}</div></td>
       <td>${badge(i.status)}</td>
       <td>${i.kind==='episode'?(i.show_imdb_id?badge('complete','SUCCESS'):badge('incompleet','WARNING')):badge('film','neutral')}</td>
       <td>${i.generation??0}</td>
       <td><a href="#" onclick="openItem('${i.id}');return false">trace</a></td></tr>`).join('');
+  paintInto('#libtable','libtbl',html);
+  $('#libcount').textContent = `${rows.length} van ${libCache.length} items`;
 }
 
 /* ---------- jobs ---------- */
-async function loadJobs(){
-  try{
-    const d = await api('/ops/jobs');
-    $('#jobs').innerHTML = d.jobs.length ? '<h2>Jobs</h2><div class="card" style="padding:0"><table><tr><th>Job</th><th>Status</th><th>Voortgang</th><th>Laatste run</th><th>Verwerkt</th><th>Hersteld</th></tr>'
-      + d.jobs.map(j=>`<tr><td>${esc(j.job_type)}</td><td>${badge(j.state,j.state==='SUCCESS'?'SUCCESS':j.state==='RUNNING'?'RUNNING':'RETRYING')}</td>
-        <td style="min-width:140px">${j.progress_total?`<div class="progress"><i style="width:${pct(j)}%"></i></div><span class="muted">${j.progress_current??0}/${j.progress_total}${j.current_item?` · ${esc(j.current_item)}`:''}</span>`:'–'}</td>
-        <td>${ago(j.last_run)}</td><td>${j.processed??'–'}</td><td>${j.recovered??0}</td></tr>`).join('') + '</table></div>'
-      + '<h2>Run-historie</h2><div class="card" style="padding:0"><table><tr><th>Job</th><th>Start</th><th>Status</th><th>Duur</th><th>Verwerkt</th><th>Hersteld</th></tr>'
-      + d.history.map(h=>`<tr><td>${esc(h.job_type)}</td><td>${ago(h.started_at)}</td>
-        <td>${badge(h.status,h.status==='SUCCESS'?'SUCCESS':h.status==='RUNNING'?'RUNNING':'RETRYING')}</td>
-        <td>${h.finished_at?`${Math.round(h.finished_at-h.started_at)}s`:'…'}</td>
-        <td>${h.processed??'–'}</td><td>${h.recovered??0}</td></tr>`).join('') + '</table></div>'
-      : empty('Geen jobs — alles is rustig. Health sweeps verschijnen hier zodra ze draaien.');
-  }catch(e){ setLive(false); }
+function jobsHtml(d){
+  if (!d.jobs.length) return empty('Geen jobs — alles is rustig. Health sweeps verschijnen hier zodra ze draaien.');
+  const row = j=>{
+    const st = j.state==='SUCCESS'?'SUCCESS':j.state==='RUNNING'?'RUNNING':'RETRYING';
+    return `<tr><td>${esc(j.job_type)}</td><td>${badge(j.state,st)}</td>
+      <td style="min-width:150px">${j.progress_total?`<div class="progress"><i style="width:${pct(j)}%"></i></div><span class="muted">${j.progress_current??0}/${j.progress_total}${j.current_item?` · ${esc(j.current_item)}`:''}</span>`:'–'}</td>
+      <td>${ago(j.last_run)}</td><td>${j.processed??'–'}</td><td>${j.changed??0}</td><td>${j.recovered??0}</td></tr>`; };
+  return `<h2>Jobs</h2><div class="card tablewrap" style="padding:0"><table>
+    <tr><th>Job</th><th>Status</th><th>Voortgang</th><th>Laatste run</th><th>Verwerkt</th><th>Veranderd</th><th>Hersteld</th></tr>
+    ${d.jobs.map(row).join('')}</table></div>
+    <h2>Run-historie</h2><div class="card tablewrap" style="padding:0"><table>
+    <tr><th>Job</th><th>Start</th><th>Status</th><th>Duur</th><th>Verwerkt</th><th>Hersteld</th></tr>
+    ${d.history.map(h=>`<tr><td>${esc(h.job_type)}</td><td>${ago(h.started_at)}</td>
+      <td>${badge(h.status,h.status==='SUCCESS'?'SUCCESS':h.status==='RUNNING'?'RUNNING':'RETRYING')}</td>
+      <td>${h.finished_at?`${Math.round(h.finished_at-h.started_at)}s`:'…'}</td>
+      <td>${h.processed??'–'}</td><td>${h.recovered??0}</td></tr>`).join('')}</table></div>`;
 }
 
 /* ---------- providers ---------- */
-async function loadProviders(){
-  try{
-    const d = await api('/ops/providers/health');
-    $('#providers').innerHTML = d.providers.map(p=>`
-      <div class="card"><h3>${esc(p.name)} ${badge(p.status,p.status==='HEALTHY'?'SUCCESS':'WARNING')}</h3>
-      <table><tr><th>Metric (24u)</th><th>Waarde</th></tr>
-      <tr><td>Provider-retries</td><td>${p.retries}</td></tr>
-      <tr><td>HTTP 400 / 429 / 5xx</td><td>${p.provider_400} / ${p.provider_429} / ${p.provider_5xx}</td></tr>
-      <tr><td>Niet-ready (transient)</td><td>${p.not_ready}</td></tr>
-      <tr><td>Candidate-failures (transient / permanent)</td><td>${p.transient} / ${p.permanent}</td></tr>
-      <tr><td>Add-budget per resolve (gem / limiet)</td><td>${p.avg_adds_per_resolve} / ${p.budget_limit}</td></tr></table></div>`).join('');
-  }catch(e){ setLive(false); }
+function providersHtml(d){
+  return d.providers.map(p=>`
+    <div class="card"><h3>${esc(p.name)} ${badge(p.status,p.status==='HEALTHY'?'SUCCESS':'WARNING')}</h3>
+    <table><tr><th>Signaal (24u)</th><th>Waarde</th></tr>
+    <tr><td>Provider-retries</td><td>${p.retries}</td></tr>
+    <tr><td>HTTP 400 / 429 / 5xx</td><td>${p.provider_400} / ${p.provider_429} / ${p.provider_5xx}</td></tr>
+    <tr><td>Niet-gereed (transient, komt terug)</td><td>${p.not_ready}</td></tr>
+    <tr><td>Candidate-failures (transient / permanent)</td><td>${p.transient} / ${p.permanent}</td></tr>
+    <tr><td>Add-budget per resolve (gemiddeld / limiet)</td><td>${p.avg_adds_per_resolve} / ${p.budget_limit}</td></tr></table></div>`).join('');
 }
 
 /* ---------- item detail ---------- */
@@ -319,44 +363,50 @@ async function openItem(id){
   try{
     const t = await api(`/ops-media/${id}/trace`);
     const i = t.item;
-    const pathSteps = [
+    const steps = [
       {l:'Plex-mapping', v:i.plex_path, ok:!!i.plex_path},
       {l:'Resolver item', v:`${i.id.slice(0,8)} (gen ${i.generation})`, ok:true},
       {l:'Current source', v:t.active_source?`${t.active_source.file_name} · ${(t.active_source.size/2**30).toFixed(2)} GB`:'geen', ok:!!t.active_source},
     ];
+    const dims = `
+      <tr><td>Identiteit</td><td>${i.kind==='episode' ? (i.show_imdb_id?badge('healthy','SUCCESS'):badge('incompleet','WARNING')) : badge('healthy','SUCCESS')}</td></tr>
+      <tr><td>Source</td><td>${t.active_source?badge('actief','SUCCESS'):badge(i.status==='NO_SOURCE'?'geen bruikbare':'geen', i.status==='NO_SOURCE'?'NO_SOURCE':'WARNING')}</td></tr>
+      <tr><td>Path</td><td>${i.plex_path?badge('geconfigureerd','SUCCESS'):badge('ontbreekt','FAILED')}</td></tr>
+      <tr><td>Delivery</td><td>${badge('not active','neutral')}</td></tr>`;
     $('#itembody').innerHTML = `
-      <h3>${esc(i.series?`${i.series} S${String(i.season).padStart(2,'0')}E${String(i.episode).padStart(2,'0')} — `:'')}${esc(i.title||'')} ${badge(i.status)}</h3>
+      <h3>${esc(i.series?`${i.series} S${String(i.season).padStart(2,'0')}E${String(i.episode).padStart(2,'0')} — `:'')}${esc(i.title||'')} ${badge(i.status)} <span class="muted">gen ${i.generation}</span></h3>
       <div class="grid cols">
-        <div class="card"><h3>Identiteit</h3><table>
-          ${i.kind==='episode'?`<tr><td>Show</td><td class="mono">${esc(i.show_imdb_id||'–')}</td></tr>
-            <tr><td>Show TMDb/TVDb</td><td>${esc(i.show_tmdb_id||'–')} / ${esc(i.show_tvdb_id||'–')}</td></tr>`:''}
-          <tr><td>Episode IMDb</td><td>${esc(i.imdb_id||'–')}</td></tr>
-          <tr><td>Episode TMDb/TVDb</td><td>${esc(i.tmdb_id||'–')} / ${esc(i.tvdb_id||'–')}</td></tr></table></div>
-        <div class="card"><h3>Pad-keten</h3><div class="chain">${pathSteps.map(s=>
+        <div class="card"><h3>Gezondheid per dimensie</h3><table>${dims}</table></div>
+        <div class="card"><h3>Pad-keten</h3><div class="chain">${steps.map(s=>
           `<span class="step ${s.ok?'ok':'bad'}">${s.ok?'✓':'✗'} ${s.l}: ${esc(s.v)}</span><span class="arrow">↓</span>`).join('')}
-          <span class="step">provider (TorBox)</span></div></div>
+          <span class="step">provider (TorBox)</span></div>
+          ${i.kind==='episode'?`<div class="muted" style="margin-top:6px">show ${esc(i.show_imdb_id||'–')} · episode ${esc(i.imdb_id||'–')}</div>`:''}</div>
       </div>
       <h2>Candidate-trace laatste resolve</h2>
       ${t.last_resolve.candidate_count!=null?`<div class="muted">${t.last_resolve.candidate_count} candidates · ${t.last_resolve.provider_adds??0} provider-adds</div>${rejectBar(t.last_resolve.rejects||{})}`:''}
-      <table><tr><th>#</th><th>Candidate</th><th>Resultaat</th></tr>
+      <div class="tablewrap"><table><tr><th>#</th><th>Candidate</th><th>Resultaat</th></tr>
       ${t.last_resolve.candidates.map((c,n)=>`<tr><td>${n+1}</td><td class="mono" style="max-width:420px;overflow:hidden;text-overflow:ellipsis">${esc(c.name||c.hash||'?')}</td>
-        <td>${c.result==='SELECTED'?badge('SELECTED','SUCCESS'):`<span class="muted">${esc(c.human||c.result)}</span>${c.error?`<div class="muted">${esc(c.error)}</div>`:''}`}</td></tr>`).join('')}</table>
+        <td>${c.result==='SELECTED'?badge('SELECTED','SUCCESS'):`<span class="muted">${esc(c.human||c.result)}</span>${c.error?`<div class="muted">${esc(c.error)}</div>`:''}`}</td></tr>`).join('')}</table></div>
       <details><summary>Technische timeline</summary><div class="chain">${t.timeline.slice(-25).reverse().map(e=>
         `<span class="step">${new Date(e.ts*1000).toLocaleTimeString()} · ${esc(e.kind)}</span>`).join('')}</div></details>`;
     $('#itemdlg').style.display='block';
-  }catch(e){ alert('Trace niet beschikbaar: '+e.message); }
+  }catch(e){ /* keep previous overlay state; toon status in live-indicator */
+    failures++; setLive(false); }
 }
 function closeItem(){ $('#itemdlg').style.display='none'; }
 
 /* ---------- live/status ---------- */
 function setLive(on){
   $('#live').className = on?'':'off';
-  $('#livetext').textContent = on?'Live':(failures>3?'Offline — hervat zodra API reageert':'Verbinden…');
+  if (on && !staleTick) $('#livetext').textContent = 'Live';
 }
+
+/* ---------- navigatie ---------- */
 document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#nav button').forEach(x=>x.classList.remove('on'));
   document.querySelectorAll('section').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on'); $('#s-'+b.dataset.s).classList.add('on'); refresh(b.dataset.s);
+  b.classList.add('on'); $('#s-'+b.dataset.s).classList.add('on');
+  onShown(b.dataset.s);
 });
 document.querySelectorAll('#actfilters button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#actfilters button').forEach(x=>x.classList.remove('on'));
@@ -367,19 +417,40 @@ $('#actprev').onclick = ()=>{ if(actPage>0){actPage--;loadActivity();} };
 $('#actnext').onclick = ()=>{ actPage++; loadActivity(); };
 $('#libq').oninput = renderLibrary; $('#libstatus').onchange = renderLibrary;
 
+/* ---------- polling: cadans per datatype + visibility + dedupe ---------- */
 function refresh(sec){
-  if(sec==='overview'||!sec) loadOverview();
-  if(sec==='activity') loadActivity();
-  if(sec==='issues') loadIssues();
+  if(sec==='overview') apiKeep('/ops/dashboard', d=>{
+    const h = overviewHtml(d);
+    paintInto('#healthbanner','hb',h.banner); paintInto('#kpilib','kl',h.kpilib);
+    paintInto('#kpiauto','ka',h.kpiauto); paintInto('#nowactive','na',h.now);
+    paintInto('#wins','wi',h.wins); paintInto('#sweeperbox','sw',h.sweeper); });
+  if(sec==='activity') apiKeep(`/ops/activity?hours=${$('#acthours').value}&filter=${actFilter}&limit=15&offset=${actPage*15}`,
+    d=>{ $('#actpage').textContent = `${actPage*15+1}–${Math.min((actPage+1)*15,d.total)} van ${d.total}`;
+         paintInto('#activity','act', activityHtml(d)); });
+  if(sec==='issues') apiKeep('/ops/issues', d=>paintInto('#issues','iss', issuesHtml(d)));
+  if(sec==='jobs') apiKeep('/ops/jobs', d=>paintInto('#jobs','jobs', jobsHtml(d)));
+  if(sec==='providers') apiKeep('/ops/providers/health', d=>paintInto('#providers','prov', providersHtml(d)));
   if(sec==='library') loadLibrary();
-  if(sec==='jobs') loadJobs();
-  if(sec==='providers') loadProviders();
 }
-refresh('overview'); loadLibrary();
-pollTimer = setInterval(()=>{
-  const on = document.querySelector('section.on').id;
-  refresh(on.replace('s-',''));
-}, 5000);
+const cadence = {overview:5000, issues:8000, activity:15000, jobs:5000,
+                 providers:30000, library:30000};
+const lastPoll = {};
+function loop(sec){
+  const now = Date.now();
+  if (now - (lastPoll[sec]||0) < cadence[sec]) return;
+  lastPoll[sec] = now; refresh(sec);
+}
+function onShown(sec){ lastPoll[sec]=0; loop(sec); }
+document.addEventListener('visibilitychange', ()=>{
+  if (!document.hidden) for (const s of ['overview','issues','jobs','activity','library']) lastPoll[s]=0;
+});
+setInterval(()=>{
+  if (document.hidden) return;               // E2: geen load op verborgen tab
+  const sec = document.querySelector('section.on').id.replace('s-','');
+  loop(sec);
+  if (sec==='overview'){ loop('issues'); loop('jobs'); }
+}, 2000);
+onShown('overview'); loadLibrary();
 </script>
 </body>
 </html>

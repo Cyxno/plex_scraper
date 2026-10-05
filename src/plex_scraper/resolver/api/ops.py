@@ -60,6 +60,25 @@ OPERATION_KINDS = {
 def create_ops_routes(app, resolver) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["ops"])
     store = resolver.store
+    _lkg: dict[str, tuple[float, dict]] = {}          # last-known-good cache
+
+    async def _guarded(key: str, producer):
+        """B3/B5: aggregate-endpoints zijn read-mostly failure-tolerant.
+        SQLite-busy of een andere transiente fout -> laatste bekende goede
+        payload met stale:true + leeftijd; nooit een lege/false-zero payload
+        (C2). Eerste keer zonder cache: nette HTTP-fout."""
+        try:
+            data = await producer()
+        except Exception as exc:                       # noqa: BLE001
+            cached = _lkg.get(key)
+            if cached is None:
+                raise
+            ts, prev = cached
+            return {**prev, "generated_at": ts, "stale": True,
+                    "stale_age_s": round(time.time() - ts),
+                    "degraded": f"laatste bekende data ({str(exc)[:80]})"}
+        _lkg[key] = (time.time(), data)
+        return {**data, "generated_at": time.time(), "stale": False}
 
     def _since(hours: float) -> float:
         return time.time() - hours * 3600.0
@@ -89,8 +108,7 @@ def create_ops_routes(app, resolver) -> APIRouter:
         return out
 
     # ------------------------------------------------------------ dashboard
-    @router.get("/dashboard")
-    async def dashboard():
+    async def _dashboard_data():
         items = await store.list_items()
         counts: dict[str, int] = {}
         for i in items:
@@ -181,6 +199,10 @@ def create_ops_routes(app, resolver) -> APIRouter:
                                       for j in jobs if j["job_type"] == "health_sweeper"]},
         }
 
+    @router.get("/dashboard")
+    async def dashboard():
+        return await _guarded("dashboard", _dashboard_data)
+
     async def _last_reject_summary(item_id: str) -> dict | None:
         def fn(c):
             r = c.execute("SELECT payload, ts FROM events WHERE media_item_id=? "
@@ -268,8 +290,7 @@ def create_ops_routes(app, resolver) -> APIRouter:
         return "; ".join(parts[:4])
 
     # --------------------------------------------------------------- issues
-    @router.get("/issues")
-    async def issues():
+    async def _issues_data():
         items = await store.list_items()
         out = []
         for i in items:
@@ -314,9 +335,12 @@ def create_ops_routes(app, resolver) -> APIRouter:
         out.sort(key=lambda x: (x["classification"], -(x["candidate_count"] or 0)))
         return {"total": len(out), "issues": out}
 
+    @router.get("/issues")
+    async def issues():
+        return await _guarded("issues", _issues_data)
+
     # ----------------------------------------------------------------- jobs
-    @router.get("/jobs")
-    async def jobs(limit: int = 30):
+    async def _jobs_data(limit: int = 30):
         runs = await store.job_runs(limit=limit)
         latest: dict[str, dict] = {}
         for r in runs:
@@ -334,6 +358,10 @@ def create_ops_routes(app, resolver) -> APIRouter:
                           "run_id": r["id"]}
                          for jt, r in latest.items()],
                 "history": runs}
+
+    @router.get("/jobs")
+    async def jobs(limit: int = 30):
+        return await _guarded("jobs", lambda: _jobs_data(limit))
 
     @router.get("/jobs/{run_id}")
     async def job_detail(run_id: int):
@@ -424,8 +452,7 @@ def create_ops_routes(app, resolver) -> APIRouter:
         }
 
     # ------------------------------------------------------------ providers
-    @router.get("/providers/health")
-    async def providers_health():
+    async def _providers_data():
         evs = await _events_since(_since(24), limit=2000)
         stats = {"torbox": {"name": "torbox", "status": "HEALTHY",
                             "retries": 0, "provider_400": 0, "provider_429": 0,
@@ -461,6 +488,10 @@ def create_ops_routes(app, resolver) -> APIRouter:
         if s["provider_5xx"] > 5 or s["retries"] > 20:
             s["status"] = "DEGRADED"
         return {"providers": list(stats.values())}
+
+    @router.get("/providers/health")
+    async def providers_health():
+        return await _guarded("providers", _providers_data)
 
     app.include_router(router)
     return router
