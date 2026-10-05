@@ -49,6 +49,9 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         @app.on_event("startup")
         async def _start_physical():
             asyncio.create_task(app.state.physical.run())
+            if os.environ.get("SOAK_ENABLED", "false") == "true":
+                from plex_scraper.resolver.soak import run as soak_run
+                asyncio.create_task(soak_run(resolver.store, app.state.physical._docker))
 
     # health sweeper (optional, disabled by default)
     sweeper_task = None
