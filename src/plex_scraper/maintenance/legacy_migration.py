@@ -33,7 +33,7 @@ def validate_swap_target(target: str, link_path: str,
         return False, "EMPTY_TARGET"
     if not target.startswith("/"):
         return False, "RELATIVE_TARGET"
-    if target.rstrip("/") in ("/mnt/remote/nzbdav", "/"):
+    if target == "/" or target.rstrip("/") == "/mnt/remote/nzbdav":
         return False, "MOUNT_ROOT_OR_ROOT"
     if not target.startswith(CANONICAL_PREFIX):
         return False, "NON_CANONICAL_TARGET"
