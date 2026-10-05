@@ -123,6 +123,18 @@ def create_web_app(settings: Settings) -> FastAPI:
             return JSONResponse(status_code=503,
                                 content={"error": f"resolver onbereikbaar: {exc!r}"[:200]})
 
+    @app.get("/media-items")
+    async def media_items_proxy():
+        """Authoritative resolver-items voor de cockpit Library (B2):
+        vervangt de legacy migration-DB view als identiteitsbron."""
+        import httpx
+        try:
+            r = httpx.get(f"{resolver_base}/media", timeout=30.0)
+            return JSONResponse(status_code=r.status_code, content=r.json())
+        except Exception as exc:
+            return JSONResponse(status_code=503,
+                                content={"error": f"resolver onbereikbaar: {exc!r}"[:200]})
+
     @app.post("/ops-post/{path:path}")
     async def ops_post_proxy(path: str, request: Request):
         import httpx

@@ -127,7 +127,7 @@ button.act.danger{border-color:var(--err);color:var(--err)}
 <section id="s-issues"><div id="issues"></div></section>
 <section id="s-library">
   <div class="filters"><input id="libq" type="search" placeholder="Search title/series…" aria-label="Search">
-    <select id="libstatus" aria-label="Status filter"><option value="">All statuses</option><option>READY</option><option>NO_SOURCE</option><option>RESOLVING</option><option>CANDIDATE_VALIDATION</option><option>SOURCE_FAILED</option></select>
+    <select id="libstatus" aria-label="Status filter"><option value="">All</option><option value="MOVIES">Movies</option><option value="TV">TV episodes</option><option>READY</option><option>NO_SOURCE</option><option>RESOLVING</option><option>CANDIDATE_VALIDATION</option><option>SOURCE_FAILED</option></select>
   </div>
   <div class="card tablewrap" style="padding:0"><table id="libtable"></table></div>
   <div class="muted" id="libcount"></div>
@@ -341,16 +341,36 @@ function issuesHtml(d){
 }
 let libCache=[];
 async function loadLibrary(){
-  await apiKeep('/api/items', items=>{
+  await apiKeep('/media-items', items=>{
     libCache = Array.isArray(items) ? items : items.items || [];
     renderLibrary();
   });
+}
+function rowLabel(i){
+  // B5/B7: nooit verzonnen S/E of type
+  if (i.kind === 'episode'){
+    const se = (Number.isInteger(i.season) && Number.isInteger(i.episode))
+      ? `S${String(i.season).padStart(2,'0')}E${String(i.episode).padStart(2,'0')}` : null;
+    return {main: i.series || 'Unknown series',
+            sub: se ? `${se}${i.title?` · ${i.title}`:''}` : 'Episode metadata incomplete'};
+  }
+  if (i.kind === 'movie'){
+    return {main: i.title || 'Unknown movie', sub: i.year ? String(i.year) : ''};
+  }
+  return {main: i.title || i.series || 'Unknown', sub: 'Unknown type'};
+}
+function identityLabel(i){
+  if (i.kind === 'episode')
+    return i.show_imdb_id ? badge('TV episode','SUCCESS')
+         : badge('identity incomplete','WARNING');
+  if (i.kind === 'movie') return badge('Movie','neutral');
+  return badge('Unknown','neutral');
 }
 function renderLibrary(){
   const q = ($('#libq').value||'').toLowerCase();
   const st = $('#libstatus').value;
   const rows = libCache.filter(i =>
-    (!st || i.status===st) &&
+    (!st || i.status===st || (st==='MOVIES' && i.kind==='movie') || (st==='TV' && i.kind==='episode')) &&
     (!q || (i.title||'').toLowerCase().includes(q) || (i.series||'').toLowerCase().includes(q)));
   const html = `<tr><th>Item</th><th>Status</th><th>Identity</th><th>Gen</th><th>Actions</th></tr>` +
     rows.slice(0,120).map(i=>{
@@ -362,11 +382,11 @@ function renderLibrary(){
            <button class="act danger" onclick="askMarkBad('${id}')">Mark source bad</button>`
         : `<button class="act" onclick="runAction(event,'${id}','search',null)">Search now</button>
            <button class="act" onclick="runAction(event,'${id}','retry',null)">Retry now</button>`;
+      const L = rowLabel(i);
       return `<tr>
-      <td>${esc(i.series?`${i.series} S${String(i.season).padStart(2,'0')}E${String(i.episode).padStart(2,'0')}`:i.title)}
-        <div class="muted">${esc(i.series?i.title:'')}</div></td>
-      <td>${badge(i.status)}</td>
-      <td>${i.kind==='episode'?(i.show_imdb_id?badge('complete','SUCCESS'):badge('incomplete','WARNING')):badge('movie','neutral')}</td>
+      <td>${esc(L.main)}<div class="muted">${esc(L.sub)}</div></td>
+      <td>${badge(i.status||'UNKNOWN')}</td>
+      <td>${identityLabel(i)}</td>
       <td>${i.generation??0}</td>
       <td style="min-width:280px">${acts}
         <button class="act" onclick="openItem('${id}')">Trace</button>

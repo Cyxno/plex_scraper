@@ -377,3 +377,26 @@ async def test_job_finish_writes_processed(settings):
     runs = await store.job_runs("health_sweeper")
     top = runs[0]
     assert top["status"] == "SUCCESS" and top["processed"] == 7
+
+
+# --- Fix-pass: authoritative library + identity regression (J10) --------------
+
+def test_movie_search_key_uses_authoritative_imdb():
+    """J10: title (singular/plural) mag identity nooit beïnvloeden."""
+    it = m.MediaItem(id="m1", kind="movie", title="Master of the Universe",
+                     plex_path=".ids/x", year=2026, imdb_id="tt0427340",
+                     tmdb_id=454639)
+    assert it.search_key() == {"kind": "movie", "imdb_id": "tt0427340",
+                               "title": "Master of the Universe", "year": 2026}
+
+
+async def test_identity_patch_keeps_runtime_fields(settings, scorer, got_item):
+    """Identity-PATCH mag status/generation/sources niet aanraken."""
+    client, engine = _client(settings, scorer, got_item)
+    item = await engine.register_item(dict(got_item))
+    r = client.patch(f"/media/{item.id}", json={"imdb_id": "tt9999999"})
+    assert r.status_code == 200
+    fresh = await engine.store.get_item(item.id)
+    assert fresh.imdb_id == "tt9999999"
+    assert fresh.status == "READY" and fresh.generation >= 1
+    assert await engine._active_source(item.id) is not None
