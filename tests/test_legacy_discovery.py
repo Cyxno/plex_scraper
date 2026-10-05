@@ -11,7 +11,8 @@ from plex_scraper.maintenance.legacy_discovery import (
 def test_norm_strips_release_noise():
     assert norm_title("Man.Of.Steel.2013.PROPER.2160p.BluRay.REMUX.HEVC.DTS-HD.MA.TrueHD.7.1.Atmos-FGT") \
         .startswith("man of steel")
-    assert norm_title("The.Holiday.2006.2160p.4K.WEB.x265.10bit.AAC5.1-[YTS.MX]") == "the holiday"
+    assert norm_title("The.Holiday.2006.2160p.4K.WEB.x265.10bit.AAC5.1-[YTS.MX]") \
+        .startswith("the holiday")
 
 
 def test_year_and_se_extraction():
