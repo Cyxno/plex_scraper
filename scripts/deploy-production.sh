@@ -13,6 +13,7 @@ docker stop plex-scraper-vfs plex-scraper-core >/dev/null
 docker rm plex-scraper-vfs plex-scraper-core >/dev/null
 umount -l /mnt/cache/appdata/plex-scraper/vfs 2>/dev/null || true
 umount -l /mnt/remote/nzbdav 2>/dev/null || true
+sleep 3   # mount-propagatie laten settlen vóór recreate (voorkomt 'file exists'-race)
 
 CORE_ENV='[{"role":"resolver","env":{"RESOLVER_BIND":"0.0.0.0:8282","DB_PATH":"/data/state.db","CONFIG_DIR":"/config","TORBOX_API_TOKEN_FILE":"/run/secrets/torbox_key","SWEEPER_ENABLED":"true","SWEEPER_AUTOSTART":"true","SWEEPER_ITEMS_PER_HOUR":"200","SWEEPER_SHADOW_MODE":"false","SWEEPER_FAIL_STRIKES":"2","SWEEPER_PLAYBACK_PAUSE":"true","STREAM_TWO_WAY_ENABLED":"true","ADAPTIVE_TWO_WAY_MIN_MBIT":"40","JIT_ENABLED":"true","JIT_PREFLIGHT_MIN_MBIT":"40","JIT_MAX_WAIT_S":"12","JIT_RESCUE_MARGIN":"1.2","JIT_STARTUP_FIRST_BYTE_S":"8"}},{"role":"scraper","env":{"SCRAPER_BIND":"0.0.0.0:8283","CONFIG_DIR":"/config","TORBOX_API_TOKEN_FILE":"/run/secrets/torbox_key"}},{"role":"web","env":{"WEB_BIND":"0.0.0.0:8285","RESOLVER_URL":"http://127.0.0.1:8282","MIG_DB":"/db.sqlite"}}]'
 VFS_ENV='[{"role":"vfs","env":{"VFS_MOUNTPOINT":"/mnt/cache/appdata/plex-scraper/vfs","RESOLVER_URL":"http://192.168.1.2:18282"}},{"role":"vfs","env":{"VFS_MOUNTPOINT":"/mnt/remote/nzbdav","RESOLVER_URL":"http://192.168.1.2:18282"}}]'
