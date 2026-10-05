@@ -46,7 +46,7 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         from plex_scraper.resolver.physical import PhysicalHealthMonitor
         app.state.physical = PhysicalHealthMonitor(resolver.store)
 
-        (app).on_event("startup")
+        @app.on_event("startup")
         async def _start_physical():
             asyncio.create_task(app.state.physical.run())
 

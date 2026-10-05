@@ -122,17 +122,7 @@ class PhysicalHealthMonitor:
         raw = b"".join(chunks)
         head, _, rest = raw.partition(b"\r\n\r\n")
         status = int(head.split(b" ")[1])
-        if method == "POST" and "/exec" in path and "start" in path:
-            # multiplexed stream: neem stdout-frames (type-byte 0)
-            out = bytearray()
-            i = 0
-            while i + 8 <= len(rest):
-                n = int.from_bytes(rest[i + 4:i + 8], "big")
-                if rest[i] == 0:
-                    out += rest[i + 8:i + 8 + n]
-                i += 8 + n
-            return {"status": status, "output": out.decode("utf-8", "replace")}
-        # JSON-body (chunked mogelijk)
+        # chunked framing strippen (docker streams zijn chunked)
         body_bytes = rest
         if b"Transfer-Encoding: chunked" in head:
             out, i = bytearray(), 0
@@ -146,6 +136,15 @@ class PhysicalHealthMonitor:
                 out += rest[j + 2:j + 2 + n]
                 i = j + 2 + n + 2
             body_bytes = bytes(out)
+        if method == "POST" and "/exec" in path and "start" in path:
+            # multiplexed stream: neem stdout-frames (type-byte 0)
+            out, i = bytearray(), 0
+            while i + 8 <= len(body_bytes):
+                n = int.from_bytes(body_bytes[i + 4:i + 8], "big")
+                if body_bytes[i] in (0, 1, 2):
+                    out += body_bytes[i + 8:i + 8 + n]
+                i += 8 + n
+            return {"status": status, "output": out.decode("utf-8", "replace")}
         try:
             return {"status": status, "json": json.loads(body_bytes or b"{}")}
         except ValueError:
@@ -225,8 +224,9 @@ class PhysicalHealthMonitor:
             try:
                 await self.check_once()
                 await self.maybe_recover()
-            except Exception:                          # noqa: BLE001
-                pass
+            except Exception as exc:                   # noqa: BLE001
+                from ..common.log import event
+                event("physical_check_error", error=repr(exc)[:160])
             await asyncio.sleep(CHECK_INTERVAL_S)
 
     async def library_audit(self) -> dict:
