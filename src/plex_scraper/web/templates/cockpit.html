@@ -174,6 +174,15 @@ const ago = ts => { const d = Math.round(Date.now()/1000 - ts);
 const fmtIn = s => s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s/60)}m` : `${Math.round(s/3600)}u`;
 const badge = (t,c)=>`<span class="badge b-${esc(c||t)}">${esc(t)}</span>`;
 let failures = 0;
+/* Capture-harness: ?shot=1 maakt de eerste laadronde synchroon zodat een
+   headless screenshot na het load-event een gevulde cockpit ziet. */
+const SHOT = new URLSearchParams(location.search).has('shot');
+if (SHOT) window.fetch = path => {
+  const x = new XMLHttpRequest(); x.open('GET', path, false); x.send();
+  return {ok: x.status < 400, status: x.status,
+          json: () => Promise.resolve(JSON.parse(x.responseText)),
+          text: () => Promise.resolve(x.responseText)};
+};
 
 /* ---------- api: dedupe + stale-preserving (B6/G2/E3) ---------- */
 const lastGood = {}; const inflight = {};
@@ -255,7 +264,7 @@ function overviewHtml(d){
   const now = (d.now.resolving.length || d.now.jobs_running.length)
     ? d.now.resolving.map(r=>card(esc(r.label),'Resolving',badge('RUNNING'))).join('')
       + d.now.jobs_running.map(j=>card(esc(j.job_type)+(j.current_item?` — ${esc(j.current_item)}`:''),
-        `job ${j.progress_current??'?'} / ${j.progress_total??'?'}`,
+        `job ${j.progress_current??0} / ${j.progress_total??"?"}`,
         `<div class="progress"><i style="width:${pct(j)}%"></i></div>`)).join('')
     : empty('Idle — geen actieve resolvers of jobs.');
   const wins = d.recent_wins.length ? d.recent_wins.map(w=>
@@ -451,6 +460,13 @@ setInterval(()=>{
   if (sec==='overview'){ loop('issues'); loop('jobs'); }
 }, 2000);
 onShown('overview'); loadLibrary();
+/* deeplink: #issues, #jobs, … of #item/<id> voor directe item-trace */
+(function(){
+  const h = location.hash.replace('#','');
+  if (h.startsWith('item/')){ openItem(h.slice(5)); return; }
+  const b = document.querySelector(`#nav button[data-s="${h}"]`);
+  if (b) b.click();
+})();
 </script>
 </body>
 </html>
