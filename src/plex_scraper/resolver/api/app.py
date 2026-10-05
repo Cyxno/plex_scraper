@@ -42,12 +42,13 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
     app = FastAPI(title="plex_scraper resolver", version=__version__, docs_url=None, redoc_url=None)
 
     # physical serving-health (consumer-chain sentinel in de plex-container)
-    physical_task = None
     if os.environ.get("PHYSICAL_HEALTH_ENABLED", "false") == "true":
         from plex_scraper.resolver.physical import PhysicalHealthMonitor
-        monitor = PhysicalHealthMonitor(resolver.store)
-        app.state.physical = monitor
-        physical_task = asyncio.create_task(monitor.run())
+        app.state.physical = PhysicalHealthMonitor(resolver.store)
+
+        (app).on_event("startup")
+        async def _start_physical():
+            asyncio.create_task(app.state.physical.run())
 
     # health sweeper (optional, disabled by default)
     sweeper_task = None
