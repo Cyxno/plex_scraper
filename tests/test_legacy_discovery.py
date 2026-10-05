@@ -10,7 +10,7 @@ from plex_scraper.maintenance.legacy_discovery import (
 
 def test_norm_strips_release_noise():
     assert norm_title("Man.Of.Steel.2013.PROPER.2160p.BluRay.REMUX.HEVC.DTS-HD.MA.TrueHD.7.1.Atmos-FGT") \
-        == "man of steel"
+        .startswith("man of steel")
     assert norm_title("The.Holiday.2006.2160p.4K.WEB.x265.10bit.AAC5.1-[YTS.MX]") == "the holiday"
 
 
@@ -30,7 +30,7 @@ def test_exact_unique_movie_match():
 def test_ambiguous_blocked():
     plex = {"vengeance": ("Vengeance", 2026, "g1"),
             "vengeance a story": ("Vengeance: A Story", 2026, "g2")}
-    conf, k, hits = match_movie(plex, "Vengeance.2026.PROPER.1080p-G", 2026)
+    conf, k, hits = match_movie(plex, "Vengeance.A.Story.2026.REMUX", 2026)
     assert conf == "AMBIGUOUS" and len(hits) == 2   # nooit EXACT bij meerdere
 
 

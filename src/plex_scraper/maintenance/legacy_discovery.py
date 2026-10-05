@@ -40,9 +40,10 @@ def extract_se(basename: str) -> tuple[int, int] | None:
 
 
 def _prefix_hit(nt: str, t: str) -> bool:
-    """Plex-titel is een prefix van de release op woordgrens (release-namen
-    zijn <canonieke titel> + technische suffixen). Minimale lengte 4 tegen
-    vals-positieven als 'it'/'up'."""
+    """Plex-titel (genormaliseerd) is een prefix van de release op woordgrens
+    (release-namen zijn <canonieke titel> + technische suffixen). Minimale
+    lengte 4 tegen vals-positieven als 'it'/'up'."""
+    t = norm_title(t)
     return len(t) >= 4 and (nt == t or nt.startswith(t + " "))
 
 
@@ -69,7 +70,7 @@ def match_movie(norm_plex: dict[str, tuple], title: str, year: int | None):
 def match_episode(plex_shows: dict[str, tuple], series: str, season: int, episode: int):
     """TV: exacte show (genormaliseerd) + S/E. Unieke show -> EXACT."""
     ns = norm_title(series)
-    hits = [k for k, (t, _y, _g) in plex_shows.items() if t == ns]
+    hits = [k for k, (t, _y, _g) in plex_shows.items() if norm_title(t) == ns]
     if len(hits) == 1:
         return "EXACT", hits[0], hits
     if len(hits) > 1:
