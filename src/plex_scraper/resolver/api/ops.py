@@ -29,25 +29,25 @@ class MarkBadBody(BaseModel):
     reason: str
 
 HUMAN_REJECTS = {
-    "identity_wrong_show": ("verkeerde serie", "Identity"),
-    "identity_pack_missing_episode": ("aflevering niet in pack", "Identity"),
-    "identity_wrong_movie": ("verkeerde film", "Identity"),
-    "identity_wrong_year": ("verkeerd jaar", "Identity"),
-    "pre_gate_size": ("te klein (vooraf afgefilterd)", "Size"),
-    "budget_exhausted": ("niet geprobeerd (add-budget op)", "Budget"),
-    "file_too_small": ("bestand te klein / mislabeled", "Validation"),
-    "torrent_no_files": ("geen bestanden", "Validation"),
-    "provider_400": ("TorBox 400 (tijdelijk)", "Provider"),
+    "identity_wrong_show": ("wrong series", "Identity"),
+    "identity_pack_missing_episode": ("episode not in pack", "Identity"),
+    "identity_wrong_movie": ("wrong movie", "Identity"),
+    "identity_wrong_year": ("wrong year", "Identity"),
+    "pre_gate_size": ("too small (pre-filtered)", "Size"),
+    "budget_exhausted": ("not tried (add budget used)", "Budget"),
+    "file_too_small": ("file too small / mislabeled", "Validation"),
+    "torrent_no_files": ("no files", "Validation"),
+    "provider_400": ("TorBox 400 (temporary)", "Provider"),
     "provider_429": ("rate limited", "Provider"),
-    "provider_5xx": ("TorBox serverfout", "Provider"),
-    "torrent_not_ready": ("nog niet klaar (retry volgt)", "Transient"),
-    "first_byte_empty": ("geen data bij eerste byte", "Validation"),
-    "range_failed": ("lees-probe midden faalt", "Validation"),
-    "backend_unavailable": ("back-end onbereikbaar", "Backend"),
-    "provider_add_failed": ("toevoegen aan provider faalt", "Provider"),
-    "unknown_probe_failure": ("onbekende validatiefout", "Other"),
-    "bad_ttl": ("overgeslagen (tijdelijk afgekeurd)", "Retry"),
-    "no_candidates": ("geen candidates gevonden", "Provider"),
+    "provider_5xx": ("TorBox server error", "Provider"),
+    "torrent_not_ready": ("not ready yet (retry follows)", "Transient"),
+    "first_byte_empty": ("no data at first byte", "Validation"),
+    "range_failed": ("mid-file read probe failed", "Validation"),
+    "backend_unavailable": ("backend unreachable", "Backend"),
+    "provider_add_failed": ("provider add failed", "Provider"),
+    "unknown_probe_failure": ("unknown validation error", "Other"),
+    "bad_ttl": ("skipped (temporary bad)", "Retry"),
+    "no_candidates": ("no candidates found", "Provider"),
 }
 
 OPERATION_KINDS = {
@@ -94,7 +94,7 @@ def create_ops_routes(app, resolver) -> APIRouter:
             ts, prev = cached
             return {**prev, "generated_at": ts, "stale": True,
                     "stale_age_s": round(time.time() - ts),
-                    "degraded": f"laatste bekende data ({str(exc)[:80]})"}
+                    "degraded": f"last known data ({str(exc)[:80]})"}
         _lkg[key] = (time.time(), data)
         return {**data, "generated_at": time.time(), "stale": False}
 
@@ -387,16 +387,16 @@ def create_ops_routes(app, resolver) -> APIRouter:
                                 or "not_ready" in t or "budget" in t)
             if not rejects and not srcs:
                 classification = "PROVIDER_NO_MATCH"
-                human = "Provider heeft geen enkele candidate"
+                human = "Provider returned no candidates at all"
             elif rejects.get("no_candidates"):
                 classification = "PROVIDER_NO_MATCH"
-                human = "0 candidates bij volledige identiteit"
+                human = "0 candidates despite complete identity"
             elif has_transient or next_retry and next_retry > time.time():
                 classification = "NO_USABLE_CANDIDATE"
-                human = "Candidates waren er, maar nog niet bruikbaar — retry gepland"
+                human = "Candidates existed but none were usable — retry scheduled"
             else:
                 classification = "NO_USABLE_CANDIDATE"
-                human = "Candidates afgewezen op identiteit/validatie"
+                human = "Candidates rejected on identity/validation"
             out.append({
                 "item_id": i.id,
                 "label": (i.series and f"{i.series} S{i.season:02d}E{i.episode:02d}")
@@ -450,14 +450,14 @@ def create_ops_routes(app, resolver) -> APIRouter:
         for r in await store.job_runs(limit=200):
             if r["id"] == run_id:
                 return r
-        raise HTTPError(404, "run niet gevonden")
+        raise HTTPError(404, "run not found")
 
     # ---------------------------------------------------------------- trace
     @router.get("/media/{item_id}/trace")
     async def trace(item_id: str):
         it = await store.get_item(item_id)
         if it is None:
-            raise HTTPError(404, "item niet gevonden")
+            raise HTTPError(404, "item not found")
 
         def fn(c):
             rows = c.execute("SELECT * FROM events WHERE media_item_id=? "
@@ -590,7 +590,7 @@ def create_ops_routes(app, resolver) -> APIRouter:
         it = await store.get_item(item_id)
         if it is None:
             _action_locks.discard(key)
-            raise HTTPError(404, "item niet gevonden")
+            raise HTTPError(404, "item not found")
         label = (it.series and f"{it.series} S{it.season:02d}E{it.episode:02d}") or it.title
         await store.add_event("operator_action_started", item_id, action=action)
         try:
