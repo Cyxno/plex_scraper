@@ -429,7 +429,11 @@ function closeModal(){ $('#modal').style.display = 'none'; }
 /* ---------- overview ---------- */
 function overviewHtml(d){
   const L = d.library;
-  const cause = d.issues.no_source ? `${d.issues.no_source} items need attention`
+  const cov = d.coverage;
+  const cause = (cov && cov.legacy_dead > 0)
+    ? `${cov.legacy_dead} legacy media items are unavailable`
+    : d.issues.no_source ? `${d.issues.no_source} items need attention`
+    : L.identity_incomplete ? `${L.identity_incomplete} items identity incomplete`
     : L.identity_incomplete ? `${L.identity_incomplete} items identity incomplete`
     : 'all managed items healthy';
   const banner = badge(d.health, d.health==='HEALTHY'?'SUCCESS':d.health)
@@ -470,6 +474,14 @@ function overviewHtml(d){
   kpiauto += kpi('Physical library', P.status||'unknown',
     P.status==='HEALTHY'?'ok':P.status==='FAILED'?'err':'warn',
     P.checked_at?`checked ${ago(P.checked_at)}`:'');
+  const C = d.coverage;
+  if (C && C.logical_total) {
+    kpiauto += kpi(`${C.managed} / ${C.logical_total}`,
+      `library coverage · ${C.coverage_pct}%`,
+      C.legacy_dead > 0 ? 'warn' : 'ok',
+      C.legacy_dead > 0 ? `${C.legacy_dead} dead legacy · ${C.legacy_working||0} working`
+                        : `${C.legacy_working||0} working legacy`);
+  }
   return {banner: banner2, kpilib, kpiauto, now, wins, sweeper};
 }
 /* ---------- activity ---------- */

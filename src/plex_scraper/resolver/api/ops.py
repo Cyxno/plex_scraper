@@ -210,11 +210,21 @@ def create_ops_routes(app, resolver) -> APIRouter:
             health = "ERROR"
         elif ph.get("status") == "SUSPECT":
             health = "DEGRADED" if health == "HEALTHY" else health
+        # P16-P19: coverage-semantiek — geen volgroen bij dead unmanaged media
+        coverage = None
+        try:
+            with open("/data/coverage/latest.json") as fh:
+                coverage = json.load(fh)
+        except Exception:
+            coverage = None
+        if coverage and coverage.get("legacy_dead", 0) > 0:
+            health = "DEGRADED"
         jobs = await store.job_runs(limit=3)
         running = [j for j in jobs if j["status"] == "RUNNING"]
 
         return {
             "health": health,
+            "coverage": coverage,
             "physical": {"status": ph.get("status"),
                          "checked_at": ph.get("checked_at"),
                          "latency_s": ph.get("latency_s"),
