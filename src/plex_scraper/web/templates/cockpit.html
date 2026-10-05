@@ -276,7 +276,20 @@ function overviewHtml(d){
     `${sw.processed??'?'} items verwerkt, ${sw.recovered||0} hersteld · ${ago(sw.finished_at||sw.started_at)}`,
     badge(sw.status==='SUCCESS'?'SUCCESS':sw.status, sw.status==='SUCCESS'?'SUCCESS':'RETRYING'))
     : empty('Nog geen sweeper-runs vastgelegd.');
-  return {banner, kpilib, kpiauto, now, wins, sweeper};
+  const P = d.physical || {};
+  let banner2 = banner;
+  if (P.status && P.status !== 'HEALTHY') {
+    const cls = P.status === 'FAILED' ? 'ERROR' : 'DEGRADED';
+    banner2 = `<div class="banner ${cls}">${badge(cls==='ERROR'?'ERROR':'WARNING', cls==='ERROR'?'ERROR':'WARNING')}`
+      + `<span class="h">Playback storage unavailable</span>`
+      + `<span class="muted" style="font-weight:400">— ${esc(P.status)} · ${esc(P.detail||'onbekende fout')}`
+      + `${P.last_healthy_at?` · laatste gezond: ${ago(P.last_healthy_at)}`:''}</span></div>`;
+  }
+  const physical = card('Physical library',
+    `${P.status||'onbekend'}${P.checked_at?` · gecheckt ${ago(P.checked_at)}${P.latency_s!=null?` · ${P.latency_s}s`:''}`:''}`,
+    badge(P.status==='HEALTHY'?'HEALTHY':P.status==='FAILED'?'FAILED':'RETRYING',
+          P.status==='HEALTHY'?'SUCCESS':P.status==='FAILED'?'FAILED':'RETRYING'));
+  return {banner: banner2, kpilib, kpiauto: kpiauto.replace('</div>', physical+'</div>'), now, wins, sweeper};
 }
 
 /* ---------- activity ---------- */

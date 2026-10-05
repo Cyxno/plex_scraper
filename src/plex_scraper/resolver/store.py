@@ -394,3 +394,30 @@ class Store:
                 out.append(d)
             return out
         return await self.run(fn)
+
+    # ------------------------------------------------------- physical health
+    async def save_physical_health(self, result: dict) -> None:
+        def fn(c: sqlite3.Connection):
+            c.execute("""CREATE TABLE IF NOT EXISTS physical_health (
+                         id INTEGER PRIMARY KEY CHECK (id = 1),
+                         status TEXT NOT NULL, checked_at REAL NOT NULL,
+                         latency_s REAL, raw TEXT, last_healthy_at REAL)""")
+            c.execute("""INSERT INTO physical_health (id,status,checked_at,latency_s,raw,last_healthy_at)
+                         VALUES (1,?,?,?,?,?)
+                         ON CONFLICT(id) DO UPDATE SET status=excluded.status,
+                         checked_at=excluded.checked_at, latency_s=excluded.latency_s,
+                         raw=excluded.raw,
+                         last_healthy_at=COALESCE(excluded.last_healthy_at, physical_health.last_healthy_at)""",
+                      (result["status"], result["checked_at"], result.get("latency_s"),
+                       result.get("raw", "")[:200], result.get("last_healthy_at")))
+        await self.run(fn)
+
+    async def get_physical_health(self) -> dict | None:
+        def fn(c: sqlite3.Connection):
+            c.execute("""CREATE TABLE IF NOT EXISTS physical_health (
+                         id INTEGER PRIMARY KEY CHECK (id = 1),
+                         status TEXT NOT NULL, checked_at REAL NOT NULL,
+                         latency_s REAL, raw TEXT, last_healthy_at REAL)""")
+            row = c.execute("SELECT * FROM physical_health WHERE id=1").fetchone()
+            return dict(row) if row else None
+        return await self.run(fn)

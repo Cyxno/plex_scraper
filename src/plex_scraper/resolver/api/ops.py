@@ -108,6 +108,21 @@ def create_ops_routes(app, resolver) -> APIRouter:
         return out
 
     # ------------------------------------------------------------ dashboard
+    async def _physical() -> dict:
+        ph = await store.get_physical_health()
+        return ph or {"status": "UNKNOWN", "checked_at": None}
+
+    @router.get("/physical")
+    async def physical():
+        """Consumer-path health voor Netdata/metrics-scraping (DEEL G)."""
+        ph = await _physical()
+        return {"physical_library_health":
+                1 if ph.get("status") == "HEALTHY"
+                else 0 if ph.get("status") in ("FAILED", "SUSPECT") else -1,
+                "status": ph.get("status"),
+                "last_checked": ph.get("checked_at"),
+                "plex_namespace_read_ok": ph.get("status") == "HEALTHY"}
+
     async def _dashboard_data():
         items = await store.list_items()
         counts: dict[str, int] = {}
@@ -168,11 +183,26 @@ def create_ops_routes(app, resolver) -> APIRouter:
             health = "ATTENTION"
         if identity_incomplete:
             health = "DEGRADED" if health == "HEALTHY" else health
+        # F1: overall-health-precedentie — fysieke keten telt mee
+        try:
+            ph = await _physical()
+        except Exception:
+            ph = {"status": "UNKNOWN"}
+        if ph.get("status") in ("FAILED",):
+            health = "ERROR"
+        elif ph.get("status") == "SUSPECT":
+            health = "DEGRADED" if health == "HEALTHY" else health
         jobs = await store.job_runs(limit=3)
         running = [j for j in jobs if j["status"] == "RUNNING"]
 
         return {
             "health": health,
+            "physical": {"status": ph.get("status"),
+                         "checked_at": ph.get("checked_at"),
+                         "latency_s": ph.get("latency_s"),
+                         "raw": ph.get("raw"),
+                         "last_healthy_at": ph.get("last_healthy_at"),
+                         "detail": (ph.get("raw") or "")[:120]},
             "library": {"total": len(items), "ready": counts.get("READY", 0),
                         "no_source": len(no_source),
                         "resolving": len(resolving),

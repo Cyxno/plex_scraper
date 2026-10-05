@@ -240,3 +240,61 @@ def test_vfs_healthcheck_checks_mounts_not_business_state(monkeypatch, tmp_path)
     assert hc.main() == 1                              # mount weg -> unhealthy
     monkeypatch.setattr(hc, "VFS_MOUNTS", (str(tmp_path),))
     assert hc.main() == 0                              # mount aanwezig -> ok
+
+
+# --- Post-incident: physical health + recovery-policy -------------------------
+
+def test_stale_fuse_classification():
+    from plex_scraper.resolver.physical import classify
+    assert classify("HEALTHY ok=2/2") == "HEALTHY"
+    assert classify("PLEX_NAMESPACE_STALE_FUSE") == "PLEX_NAMESPACE_STALE_FUSE"
+    assert classify("MOUNT_MISSING") == "MOUNT_MISSING"
+    assert classify("[Errno 5] Transport endpoint is not connected") == \
+        "PLEX_NAMESPACE_STALE_FUSE"
+    assert classify("") == "READ_ERROR"
+
+
+def test_recovery_requires_signature_healthy_vfs_and_cooldown():
+    from plex_scraper.resolver.physical import decide_recovery
+    now = 100000.0
+    # verkeerde signature -> nooit
+    assert decide_recovery(check_status="READ_ERROR", vfs_healthy=True,
+                           last_recovery_at=0, now=now) == (False, "geen stale-FUSE-signature")
+    # juiste signature maar VFS niet healthy -> geen zin
+    assert decide_recovery(check_status="PLEX_NAMESPACE_STALE_FUSE",
+                           vfs_healthy=False, last_recovery_at=0, now=now)[0] is False
+    # juiste signature + gezonde vfs -> één restart
+    ok, why = decide_recovery(check_status="PLEX_NAMESPACE_STALE_FUSE",
+                              vfs_healthy=True, last_recovery_at=0, now=now)
+    assert ok is True
+    # cooldown blokkeert een tweede poging (geen restart-loop)
+    ok, why = decide_recovery(check_status="PLEX_NAMESPACE_STALE_FUSE",
+                              vfs_healthy=True, last_recovery_at=now - 60,
+                              now=now)
+    assert ok is False and "cooldown" in why
+
+
+async def test_physical_health_persists_and_precedence(settings, scorer, got_item):
+    """Persist + overall-health: FAILED fysiek => dashboard ERROR, niet
+    HEALTHY terwijl Plex niets kan lezen."""
+    client, engine = _client(settings, scorer, got_item)
+    await engine.register_item(dict(got_item))
+    await engine.store.save_physical_health(
+        {"status": "FAILED", "checked_at": 1.0, "raw":
+         "PLEX_NAMESPACE_STALE_FUSE", "latency_s": 0.1})
+    d = client.get("/api/dashboard").json()
+    assert d["health"] == "ERROR"
+    assert d["physical"]["status"] == "FAILED"
+    r = client.get("/api/physical").json()
+    assert r["physical_library_health"] == 0      # Netdata/metrics-signaal
+
+
+async def test_blip_is_suspect_not_failed(settings):
+    from plex_scraper.resolver.physical import PhysicalHealthMonitor
+    from plex_scraper.resolver.store import Store
+    store = Store(str(settings.db_path))
+    mon = PhysicalHealthMonitor(store)
+    await mon._record({"status": "READ_ERROR", "checked_at": 1.0})
+    assert mon.state["status"] == "SUSPECT"       # één blip = SUSPECT
+    await mon._record({"status": "READ_ERROR", "checked_at": 2.0})
+    assert mon.state["status"] == "READ_ERROR"
