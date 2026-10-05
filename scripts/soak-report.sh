@@ -1,6 +1,6 @@
 #!/bin/bash
 # F6/F7: eindrapport uit de soak-harness (draait in plex-scraper-core).
-exec docker exec plex-scraper-core python3 - <<'PY'
+exec docker exec -i plex-scraper-core python3 - <<'PY'
 import glob, json, os, statistics, sys
 
 d = "/data/soak"
