@@ -668,12 +668,15 @@ def create_ops_routes(app, resolver) -> APIRouter:
             return {"status": "FAILED", "message": "physical monitor niet actief"}
 
         async def fn(it):
+            is_tv = it.kind == "episode"
+            section = 2 if is_tv else 1
             script = (
-                "import json,sys\n"
+                "import json,sys,re\n"
                 "data = json.loads(sys.argv[1])\n"
                 "import urllib.request\n"
-                "req = urllib.request.Request('http://127.0.0.1:32400/library/sections/1/all?includeGuids=1',\n"
-                "    headers={'Accept':'application/json'})\n"
+                "tok = re.search(r'PlexOnlineToken=\"([^\"]+)\"', open('/config/Plex Media Server/Preferences.xml').read()).group(1)\n"
+                f"req = urllib.request.Request('http://127.0.0.1:32400/library/sections/{section}/all?includeGuids=1',\n"
+                "    headers={'Accept':'application/json','X-Plex-Token':tok})\n"
                 "mds = json.loads(urllib.request.urlopen(req, timeout=30).read())['MediaContainer']['Metadata']\n"
                 "hits = [x for x in mds if (x.get('title') or '').casefold()==data['title'].casefold()\n"
                 "        and (not data.get('year') or x.get('year')==data['year'])]\n"
@@ -682,9 +685,10 @@ def create_ops_routes(app, resolver) -> APIRouter:
                 "    sys.exit(0)\n"
                 "x = hits[0]\n"
                 "g = {y['id'].split('://')[0]: y['id'].split('://')[1] for y in x.get('Guid',[]) or []}\n"
-                "print(json.dumps({'mapping':'EXACT','title':x.get('title'),'imdb':g.get('imdb'),'tmdb':g.get('tmdb')}))\n")
-            arg = json.dumps({"title": it.title or it.series or "",
-                              "year": it.year})
+                "print(json.dumps({'mapping':'EXACT','title':x.get('title'),'imdb':g.get('imdb'),'tmdb':g.get('tmdb')}))\n"
+            )
+            arg = json.dumps({"title": (it.series if is_tv else it.title) or "",
+                              "year": None if is_tv else it.year})
             created = await _aio.to_thread(
                 monitor._docker, "POST", f"/containers/{monitor.plex}/exec",
                 {"AttachStdout": True, "Cmd": ["python3", "-c", script, arg]})
@@ -700,14 +704,15 @@ def create_ops_routes(app, resolver) -> APIRouter:
             auth = {"imdb_id": res.get("imdb"), "tmdb_id": res.get("tmdb")}
             from plex_scraper.resolver.identity_guard import (
                 decide_identity, IDENTITY_CONFLICT)
-            decision, detail = decide_identity(
-                {"imdb_id": it.imdb_id, "tmdb_id": it.tmdb_id}, auth,
-                {"imdb_id": it.imdb_id, "tmdb_id": it.tmdb_id})
+            own = ({"imdb_id": it.show_imdb_id, "tmdb_id": it.show_tmdb_id}
+                   if is_tv else
+                   {"imdb_id": it.imdb_id, "tmdb_id": it.tmdb_id})
+            decision, detail = decide_identity(own, auth, own)
             if decision == IDENTITY_CONFLICT:
                 await store.set_identity_conflict(it.id, detail)
                 await store.add_event("identity_conflict", it.id,
                                       title=it.title, year=it.year,
-                                      incoming_imdb=it.imdb_id,
+                                      incoming_imdb=own.get("imdb_id"),
                                       authoritative_imdb=auth.get("imdb_id"),
                                       conflicting_fields=detail["conflicting_fields"])
                 return {"status": "CONFLICT",
