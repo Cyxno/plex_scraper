@@ -24,6 +24,7 @@ docker run -d --name plex-scraper-core --restart unless-stopped --entrypoint pyt
   -v /mnt/cache/appdata/plex-scraper/migration/migration-state.sqlite:/db.sqlite \
   -v /mnt/cache/appdata/plex-scraper/secret/torbox_key:/run/secrets/torbox_key:ro \
   -v /mnt/cache/appdata/plex-scraper/data:/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   --env ROLE_SPECS="$CORE_ENV" --env HEALTH_ROLES='["resolver","scraper","web"]' --env PHYSICAL_HEALTH_ENABLED=true \
   plex-scraper:local -m plex_scraper.roles.supervisor
 
