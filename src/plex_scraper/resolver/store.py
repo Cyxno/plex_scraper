@@ -430,3 +430,44 @@ class Store:
             row = c.execute("SELECT * FROM physical_health WHERE id=1").fetchone()
             return dict(row) if row else None
         return await self.run(fn)
+
+    # -------------------------------------------------- identity conflicts
+    async def set_identity_conflict(self, item_id: str, detail: dict) -> None:
+        def fn(c: sqlite3.Connection):
+            c.execute("""CREATE TABLE IF NOT EXISTS identity_conflicts (
+                         item_id TEXT PRIMARY KEY, detected_at REAL NOT NULL,
+                         detail_json TEXT NOT NULL)""")
+            c.execute("INSERT OR REPLACE INTO identity_conflicts VALUES (?,?,?)",
+                      (item_id, m.now(), json.dumps(detail)))
+        await self.run(fn)
+
+    async def clear_identity_conflict(self, item_id: str) -> None:
+        def fn(c: sqlite3.Connection):
+            c.execute("CREATE TABLE IF NOT EXISTS identity_conflicts ("
+                      "item_id TEXT PRIMARY KEY, detected_at REAL NOT NULL, "
+                      "detail_json TEXT NOT NULL)")
+            c.execute("DELETE FROM identity_conflicts WHERE item_id=?", (item_id,))
+        await self.run(fn)
+
+    async def get_identity_conflict(self, item_id: str) -> dict | None:
+        def fn(c: sqlite3.Connection):
+            c.execute("CREATE TABLE IF NOT EXISTS identity_conflicts ("
+                      "item_id TEXT PRIMARY KEY, detected_at REAL NOT NULL, "
+                      "detail_json TEXT NOT NULL)")
+            row = c.execute("SELECT * FROM identity_conflicts WHERE item_id=?",
+                            (item_id,)).fetchone()
+            if not row:
+                return None
+            return {"detected_at": row["detected_at"],
+                    **json.loads(row["detail_json"])}
+        return await self.run(fn)
+
+    async def list_identity_conflicts(self) -> list[dict]:
+        def fn(c: sqlite3.Connection):
+            c.execute("CREATE TABLE IF NOT EXISTS identity_conflicts ("
+                      "item_id TEXT PRIMARY KEY, detected_at REAL NOT NULL, "
+                      "detail_json TEXT NOT NULL)")
+            return [{"item_id": r["item_id"], "detected_at": r["detected_at"],
+                     **json.loads(r["detail_json"])}
+                    for r in c.execute("SELECT * FROM identity_conflicts")]
+        return await self.run(fn)

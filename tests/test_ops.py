@@ -400,3 +400,69 @@ async def test_identity_patch_keeps_runtime_fields(settings, scorer, got_item):
     assert fresh.imdb_id == "tt9999999"
     assert fresh.status == "READY" and fresh.generation >= 1
     assert await engine._active_source(item.id) is not None
+
+
+# --- Identity-conflict guard (structural pass) --------------------------------
+
+from plex_scraper.resolver.identity_guard import decide_identity
+
+
+def test_masters_and_vengeance_class_conflict():
+    d, det = decide_identity({"imdb_id": "tt41087705", "tmdb_id": 1698856},
+                             {"imdb_id": "tt0427340", "tmdb_id": 454639})
+    assert d == "IDENTITY_CONFLICT" and "imdb_id" in det["conflicting_fields"]
+    d, det = decide_identity({"imdb_id": "tt37989803", "tmdb_id": 1613798},
+                             {"imdb_id": "tt41184263", "tmdb_id": None})
+    assert d == "IDENTITY_CONFLICT"
+
+
+def test_happy_paths():
+    d, _ = decide_identity({"imdb_id": "tt0427340", "tmdb_id": 454639},
+                           {"imdb_id": "tt0427340", "tmdb_id": 454639})
+    assert d == "IDENTITY_OK"
+    d, _ = decide_identity({}, {"imdb_id": "tt0427340"})
+    assert d == "IDENTITY_ENRICHED"
+    d, _ = decide_identity({"imdb_id": "tt0427340"}, {})
+    assert d == "IDENTITY_INCOMPLETE"   # C3: geen authoritative bron -> geen oordeel
+    d, _ = decide_identity({}, {})
+    assert d == "IDENTITY_INCOMPLETE"
+    d, det = decide_identity({"tmdb_id": 1}, {"tmdb_id": 2})
+    assert d == "IDENTITY_CONFLICT" and det["conflicting_fields"] == ["tmdb_id"]
+    d, _ = decide_identity({"imdb_id": " TT0427340 "}, {"imdb_id": "tt0427340"})
+    assert d == "IDENTITY_OK"
+
+
+async def test_conflict_blocks_search_and_persists(settings, scorer, got_item):
+    client, engine = _client(settings, scorer, got_item)
+    item = await engine.register_item(dict(got_item))
+    assert item.status == "READY"
+    searches = {"n": 0}
+    orig = engine.scrapers[0].search
+
+    async def counting(key):
+        searches["n"] += 1
+        return await orig(key)
+    engine.scrapers[0].search = counting
+    await engine.store.set_identity_conflict(item.id, {
+        "conflicting_fields": ["imdb_id"],
+        "incoming": {"imdb_id": "tt41087705"},
+        "authoritative": {"imdb_id": "tt0427340"}})
+    out = await engine.resolve_item(item, reason="forced")
+    assert out is None and searches["n"] == 0
+    fresh = await engine.store.get_item(item.id)
+    assert fresh.status != "NO_SOURCE"   # D1: conflict forceert nooit NO_SOURCE
+    con = await engine.store.get_identity_conflict(item.id)
+    assert con["authoritative"]["imdb_id"] == "tt0427340"
+    await engine.store.clear_identity_conflict(item.id)
+    assert await engine.store.get_identity_conflict(item.id) is None
+
+
+async def test_issues_surface_lists_conflicts(settings, scorer, got_item):
+    client, engine = _client(settings, scorer, got_item)
+    item = await engine.register_item(dict(got_item))
+    d = client.get("/api/issues").json()
+    assert not any(i["classification"] == "IDENTITY_CONFLICT" for i in d["issues"])
+    await engine.store.set_identity_conflict(item.id, {"conflicting_fields": ["imdb_id"]})
+    d = client.get("/api/issues").json()
+    con = [i for i in d["issues"] if i["classification"] == "IDENTITY_CONFLICT"]
+    assert con and "does not match" in con[0]["human"]

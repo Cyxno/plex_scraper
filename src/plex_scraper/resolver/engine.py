@@ -188,6 +188,14 @@ class Resolver:
                 self.runtime_metrics.get("search_identity_incomplete", 0) + 1
             self.metrics["resolve_latency_sum"] += time.monotonic() - started
             return None
+        # Identity-conflict guard: een vastgesteld IDENTITY_CONFLICT blokkeert
+        # provider-search (L) zonder status naar NO_SOURCE te forceren (D1).
+        conflict = await self.store.get_identity_conflict(item.id)
+        if conflict:
+            await self._evt("search_identity_conflict_blocked", item=item,
+                            conflicting_fields=conflict.get("conflicting_fields"))
+            self.metrics["resolve_latency_sum"] += time.monotonic() - started
+            return None
         candidates = await self._gather_candidates(item)
         ranked = await self._rank_candidates(item, candidates)
         item.status = m.ItemStatus.CANDIDATE_VALIDATION.value

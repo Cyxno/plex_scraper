@@ -417,9 +417,31 @@ def create_ops_routes(app, resolver) -> APIRouter:
         out.sort(key=lambda x: (x["classification"], -(x["candidate_count"] or 0)))
         return {"total": len(out), "issues": out}
 
+    async def _issues_data_with_conflicts():
+        base = await _issues_data()
+        out = []
+        for con in await store.list_identity_conflicts():
+            it = await store.get_item(con["item_id"])
+            if it is None:
+                continue
+            out.append({
+                "item_id": it.id,
+                "label": (it.series and f"{it.series} S{it.season:02d}E{it.episode:02d}")
+                         or it.title,
+                "kind": it.kind,
+                "classification": "IDENTITY_CONFLICT",
+                "human": "Identity conflict: stored external ID does not match the "
+                         "Plex-authoritative identity. Search is blocked.",
+                "candidate_count": None,
+                "rejects": [],
+                "last_attempt_ago_s": None,
+                "next_retry_in_s": None,
+            })
+        return {"total": base["total"] + len(out), "issues": out + base["issues"]}
+
     @router.get("/issues")
     async def issues():
-        return await _guarded("issues", _issues_data)
+        return await _guarded("issues", _issues_data_with_conflicts)
 
     # ----------------------------------------------------------------- jobs
     async def _jobs_data(limit: int = 30):
@@ -634,6 +656,67 @@ def create_ops_routes(app, resolver) -> APIRouter:
             out = await _resolve_bounded(it)
             return {**out, "message": "Retry state cleared. " + out["message"]}
         return await _action(item_id, "retry", fn)
+
+    @router.post("/media/{item_id}/actions/recheck-identity")
+    async def action_recheck_identity(item_id: str):
+        """G: herlaad exacte Plex-mapping (title+year discovery, GUIDs als
+        authority), herbespreek de identity-decision; muteert alléén de
+        conflict-flag — nooit external IDs, nooit bronnen."""
+        import asyncio as _aio
+        monitor = getattr(app.state, "physical", None)
+        if monitor is None:
+            return {"status": "FAILED", "message": "physical monitor niet actief"}
+
+        async def fn(it):
+            script = (
+                "import json,sys\n"
+                "data = json.loads(sys.argv[1])\n"
+                "import urllib.request\n"
+                "req = urllib.request.Request('http://127.0.0.1:32400/library/sections/1/all?includeGuids=1',\n"
+                "    headers={'Accept':'application/json'})\n"
+                "mds = json.loads(urllib.request.urlopen(req, timeout=30).read())['MediaContainer']['Metadata']\n"
+                "hits = [x for x in mds if (x.get('title') or '').casefold()==data['title'].casefold()\n"
+                "        and (not data.get('year') or x.get('year')==data['year'])]\n"
+                "if len(hits) != 1:\n"
+                "    print(json.dumps({'mapping': 'AMBIGUOUS' if len(hits)>1 else 'MISSING'}))\n"
+                "    sys.exit(0)\n"
+                "x = hits[0]\n"
+                "g = {y['id'].split('://')[0]: y['id'].split('://')[1] for y in x.get('Guid',[]) or []}\n"
+                "print(json.dumps({'mapping':'EXACT','title':x.get('title'),'imdb':g.get('imdb'),'tmdb':g.get('tmdb')}))\n")
+            arg = json.dumps({"title": it.title or it.series or "",
+                              "year": it.year})
+            created = await _aio.to_thread(
+                monitor._docker, "POST", f"/containers/{monitor.plex}/exec",
+                {"AttachStdout": True, "Cmd": ["python3", "-c", script, arg]})
+            started = await _aio.to_thread(
+                monitor._docker, "POST",
+                f"/exec/{created['json']['Id']}/start",
+                {"Detach": False, "Tty": False})
+            raw = (started.get("output") or "").strip().splitlines()[-1:] or ["{}"]
+            res = json.loads(raw[0] or "{}")
+            if res.get("mapping") != "EXACT":
+                return {"status": "INCOMPLETE",
+                        "message": f"Plex mapping {res.get('mapping')} — identity onveranderd"}
+            auth = {"imdb_id": res.get("imdb"), "tmdb_id": res.get("tmdb")}
+            from plex_scraper.resolver.identity_guard import (
+                decide_identity, IDENTITY_CONFLICT)
+            decision, detail = decide_identity(
+                {"imdb_id": it.imdb_id, "tmdb_id": it.tmdb_id}, auth,
+                {"imdb_id": it.imdb_id, "tmdb_id": it.tmdb_id})
+            if decision == IDENTITY_CONFLICT:
+                await store.set_identity_conflict(it.id, detail)
+                await store.add_event("identity_conflict", it.id,
+                                      title=it.title, year=it.year,
+                                      incoming_imdb=it.imdb_id,
+                                      authoritative_imdb=auth.get("imdb_id"),
+                                      conflicting_fields=detail["conflicting_fields"])
+                return {"status": "CONFLICT",
+                        "message": "Identity conflict registered — search blocked "
+                                   "until authoritative reconciliation"}
+            await store.clear_identity_conflict(it.id)
+            return {"status": "OK",
+                    "message": f"Identity {decision} (Plex: {auth.get('imdb_id') or 'n/a'})"}
+        return await _action(item_id, "recheck_identity", fn)
 
     @router.post("/media/{item_id}/actions/recheck")
     async def action_recheck(item_id: str):

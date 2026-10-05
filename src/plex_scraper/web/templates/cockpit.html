@@ -319,11 +319,15 @@ function activityHtml(d){
 function issuesHtml(d){
   if (!d.issues.length) return empty('No current issues — all managed items are healthy.');
   return d.issues.map(i=>{
-    const sev = i.classification==='PROVIDER_NO_MATCH' ? 'NO_MATCH' : 'RETRYING';
+    const sev = i.classification==='PROVIDER_NO_MATCH' ? 'NO_MATCH'
+      : i.classification==='IDENTITY_CONFLICT' ? 'FAILED' : 'RETRYING';
     const retry = i.next_retry_in_s!=null
       ? `<span data-retry-until="${Date.now()+i.next_retry_in_s*1000}">retry in ${fmtIn(i.next_retry_in_s)}</span>` : '';
     const id8 = i.item_id.slice(0,8);
-    const acts = `
+    const conflict = i.classification === 'IDENTITY_CONFLICT';
+    const acts = conflict
+      ? `<button class="act" onclick="runAction(event,'${i.item_id}','recheck-identity',null,'#am-${id8}')">Recheck identity</button>`
+      : `
       <button class="act" onclick="runAction(event,'${i.item_id}','search',null,'#am-${id8}')">Search now</button>
       <button class="act" onclick="runAction(event,'${i.item_id}','retry',null,'#am-${id8}')">Retry now</button>
       <button class="act" onclick="askMagnet('${i.item_id}','#am-${id8}')">Add magnet</button>`;
