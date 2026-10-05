@@ -236,7 +236,7 @@ def test_vfs_healthcheck_checks_mounts_not_business_state(monkeypatch, tmp_path)
     from plex_scraper.roles import healthcheck as hc
     monkeypatch.delenv("HEALTH_ROLES", raising=False)
     monkeypatch.setenv("ROLE_SPECS", '[{"role":"vfs","env":{}}]')
-    monkeypatch.setattr(hc, "VFS_MOUNTS", (str(tmp_path), "/niet-bestaand-mount"))
+    monkeypatch.setattr(hc, "VFS_MOUNTS", (str(tmp_path), str(tmp_path / "weg")))
     assert hc.main() == 1                              # mount weg -> unhealthy
     monkeypatch.setattr(hc, "VFS_MOUNTS", (str(tmp_path),))
     assert hc.main() == 0                              # mount aanwezig -> ok

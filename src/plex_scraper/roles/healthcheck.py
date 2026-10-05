@@ -40,7 +40,7 @@ def main() -> int:
         # sentinel, geen library-scan; business-state hoort hier niet).
         for mp in VFS_MOUNTS:
             try:
-                os.statvfs(mp)
+                os.stat(mp)  # statvfs faalt op FUSE (ENOSYS)
                 results[mp] = "mounted"
             except OSError as e:
                 results[mp] = f"FAIL {e.__class__.__name__}"
