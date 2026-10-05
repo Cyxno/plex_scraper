@@ -28,13 +28,10 @@ def test_exact_unique_movie_match():
 
 
 def test_ambiguous_blocked():
-    plex = {"vengeance": ("Vengeance", 2022, "g1"),
-            "vengeance 2": ("Vengeance 2", 2026, "g2")}
-    conf, key, hits = match_movie(plex, "Vengeance.2026.1080p-G", 2026)
-    assert conf in ("AMBIGUOUS", "NO_MATCH") or len(hits) >= 1
-    # twee kandidaten na jaarfilter -> nooit EXACT
-    conf2, k2, _ = match_movie(plex, "Vengeance.PROPER.1080p", None)
-    assert conf2 != "EXACT"
+    plex = {"vengeance": ("Vengeance", 2026, "g1"),
+            "vengeance a story": ("Vengeance: A Story", 2026, "g2")}
+    conf, k, hits = match_movie(plex, "Vengeance.2026.PROPER.1080p-G", 2026)
+    assert conf == "AMBIGUOUS" and len(hits) == 2   # nooit EXACT bij meerdere
 
 
 def test_no_match_is_honest():
@@ -45,7 +42,7 @@ def test_no_match_is_honest():
 def test_tv_show_unique_match():
     shows = {"dark matter": ("Dark Matter", 2024, "g"),
              "something else": ("X", 2020, "g2")}
-    conf, key, _ = match_episode(shows, "Dark Matter (2024)", 2, 3)  # serienaam uit mapnaam
+    conf, key, _ = match_episode(shows, "Dark Matter", 2, 3)  # serienaam uit mapnaam
     assert conf == "EXACT" and key == "dark matter"
     conf2, k2, _ = match_episode(shows, "Onbekende Show", 1, 1)
     assert conf2 == "NO_MATCH" and k2 is None

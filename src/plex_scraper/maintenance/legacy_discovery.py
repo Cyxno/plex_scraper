@@ -39,15 +39,23 @@ def extract_se(basename: str) -> tuple[int, int] | None:
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
+def _prefix_hit(nt: str, t: str) -> bool:
+    """Plex-titel is een prefix van de release op woordgrens (release-namen
+    zijn <canonieke titel> + technische suffixen). Minimale lengte 4 tegen
+    vals-positieven als 'it'/'up'."""
+    return len(t) >= 4 and (nt == t or nt.startswith(t + " "))
+
+
 def match_movie(norm_plex: dict[str, tuple], title: str, year: int | None):
     """Retourneer (confidence, key_of_match, candidates).
 
-    EXACT: unieke genormaliseerde titel-match (+ jaar-overeenkomst indien
-    bekend). Meerdere matches -> AMBIGUOUS; geen -> NO_MATCH.
+    EXACT: unieke Plex-titel die als woordgrens-prefix van de genormaliseerde
+    release staat (+ jaar-overeenkomst indien bekend). Meerdere -> AMBIGUOUS;
+    geen -> NO_MATCH.
     """
     nt = norm_title(title)
-    hits = [k for k, (t, _y, _g) in norm_plex.items() if t == nt]
-    if year is not None:
+    hits = [k for k, (t, _y, _g) in norm_plex.items() if _prefix_hit(nt, t)]
+    if year is not None and len(hits) > 1:
         year_hits = [k for k in hits if norm_plex[k][1] in (None, year)]
         if year_hits:
             hits = year_hits
@@ -55,11 +63,7 @@ def match_movie(norm_plex: dict[str, tuple], title: str, year: int | None):
         return "EXACT", hits[0], hits
     if len(hits) > 1:
         return "AMBIGUOUS", None, hits
-    # laatste redmiddel: unieke substring-omvat-relatie (discovery)
-    sub = [k for k, (t, _y, _g) in norm_plex.items() if t and (t in nt or nt in t) and len(nt) > 8]
-    if len(sub) == 1:
-        return "HIGH", sub[0], sub
-    return "NO_MATCH", None, sub
+    return "NO_MATCH", None, []
 
 
 def match_episode(plex_shows: dict[str, tuple], series: str, season: int, episode: int):
