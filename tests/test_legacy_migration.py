@@ -38,8 +38,17 @@ def test_link_outside_symlink_root_rejected():
     assert not ok and why == "LINK_OUTSIDE_SYMLINK_ROOT"
 
 
-def test_unreadable_canonical_rejected(tmp_path):
-    ok, why = validate_swap_target(str(tmp_path / "missing"), "/mnt/vm_storage/symlinks/x",
+def test_unreadable_canonical_rejected(tmp_path, monkeypatch):
+    import plex_scraper.maintenance.legacy_migration as lm
+    monkeypatch.setattr(lm, "CANONICAL_PREFIX", str(tmp_path) + "/.ids/")
+    fake = tmp_path / ".ids" / "missing.mkv"     # prefix ok, file bestaat niet:
+    ok, why = validate_swap_target(str(fake), "/mnt/vm_storage/symlinks/x")
+    assert not ok and why == "TARGET_NOT_FOUND"
+    # leesbaar-pad maar probe faalt -> TARGET_READ_FAILED
+    real = tmp_path / ".ids" / "dead.mkv"
+    real.parent.mkdir(parents=True)
+    real.write_bytes(b"x")
+    ok, why = validate_swap_target(str(real), "/mnt/vm_storage/symlinks/x",
                                    read_probe=_probe_fail)
     assert not ok and why == "TARGET_READ_FAILED"
 
