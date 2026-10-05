@@ -207,3 +207,36 @@ async def test_retention_prunes_old_events(settings):
                 c.execute("SELECT count(*) FROM events WHERE kind='resolution_succeeded'").fetchone()[0])
     n_bad, n_ok = await store.run(count)
     assert n_bad == 0 and n_ok == 1
+
+
+# --- F12/F13: healthcheck rol-detectie + VFS-sentinel -------------------------
+
+def test_health_roles_derived_from_role_specs(monkeypatch):
+    """Vergeten HEALTH_ROLES leidt niet meer tot verkeerde rollen-check."""
+    import importlib
+    from plex_scraper.roles import healthcheck as hc
+    monkeypatch.delenv("HEALTH_ROLES", raising=False)
+    monkeypatch.setenv("ROLE_SPECS",
+                       '[{"role":"vfs","env":{}},{"role":"vfs","env":{}}]')
+    importlib.reload(hc)
+    assert hc._health_roles() == ["vfs"]
+    monkeypatch.setenv("ROLE_SPECS",
+                       '[{"role":"resolver","env":{}},{"role":"web","env":{}}]')
+    importlib.reload(hc)
+    assert hc._health_roles() == ["resolver", "web"]
+    monkeypatch.setenv("HEALTH_ROLES", '["resolver"]')
+    importlib.reload(hc)
+    assert hc._health_roles() == ["resolver"]          # expliciet wint
+
+
+def test_vfs_healthcheck_checks_mounts_not_business_state(monkeypatch, tmp_path):
+    """VFS-health = mount-sentinel; provider/business-fouten maken hem niet
+    unhealthy (F21). Ontbrekende mount -> exit 1."""
+    import importlib
+    from plex_scraper.roles import healthcheck as hc
+    monkeypatch.delenv("HEALTH_ROLES", raising=False)
+    monkeypatch.setenv("ROLE_SPECS", '[{"role":"vfs","env":{}}]')
+    monkeypatch.setattr(hc, "VFS_MOUNTS", (str(tmp_path), "/niet-bestaand-mount"))
+    assert hc.main() == 1                              # mount weg -> unhealthy
+    monkeypatch.setattr(hc, "VFS_MOUNTS", (str(tmp_path),))
+    assert hc.main() == 0                              # mount aanwezig -> ok
