@@ -600,3 +600,60 @@ def test_dead_grab_record_does_not_claim(ingest_settings):
     assert not act({"status": "failed", "trackedDownloadStatus": "error"})
     assert not act({"status": "completed",
                     "trackedDownloadStatus": "warning"})
+
+
+# ------------------- regressie: PROVIDER_WAIT/FAILED_RETRYABLE moeten herleven
+@pytest.mark.asyncio
+async def test_provider_wait_resumes_when_circuit_recovers(
+        ingest_settings, scorer):
+    """PROVIDER_WAIT + circuit weer gezond → job verwerft alsnog (geen
+    doodlopende state; productie-regressie 2026-10-06: 109 jobs zaten vast)."""
+    bridge, engine = make_bridge(
+        ingest_settings, scorer, sonarr=FakeSonarr([FakeSeries(
+            58, episodes=[FakeEpisode(2526, 58, episodeNumber=8)])]),
+        plex=FakePlex(True),
+        provider_specs={"cand1": {"size": 4096}},
+        search_results={"episode:tt26545992:1:8": [
+            cand("cand1", "Lanterns.S01E08.2160p.WEB-DL-GRP",
+                 size=3_000_000_000,
+                 file_name="Lanterns.S01E08.2160p.WEB-DL-GRP.mkv")]})
+    job = lanterns_job()
+    await bridge.enqueue(job, "test")
+    engine.circuit.report_rate_limited("torrentio", retry_after_s=9999)
+    await bridge.process_job(job)                 # circuit open → PROVIDER_WAIT
+    fresh = await bridge.store.get_job(job.id)
+    assert fresh.status == JobState.PROVIDER_WAIT.value
+    # circuit herstelt (half-open probe geslaagd)
+    engine.circuit.report_success("torrentio")
+    await bridge.process_job(fresh)               # nu wél door de pipeline
+    done = await bridge.store.get_job(job.id)
+    assert done.status in (JobState.COMPLETED.value,
+                           JobState.FAILED_RETRYABLE.value,
+                           JobState.BLOCKED_MAPPING.value)
+    assert done.resolver_item_id is not None      # er ís echt werk gedaan
+
+
+@pytest.mark.asyncio
+async def test_failed_retryable_returns_to_pipeline(ingest_settings, scorer):
+    """FAILED_RETRYABLE + gezonde provider + geen arr-claim → pipeline herneemt
+    (registratie + resolve), in plaats van eeuwig niets te doen."""
+    bridge, engine = make_bridge(
+        ingest_settings, scorer, sonarr=FakeSonarr([FakeSeries(
+            58, episodes=[FakeEpisode(2526, 58, episodeNumber=8)])]),
+        plex=FakePlex(True),
+        provider_specs={"cand1": {"size": 4096}},
+        search_results={"episode:tt26545992:1:8": [
+            cand("cand1", "Lanterns.S01E08.2160p.WEB-DL-GRP",
+                 size=3_000_000_000,
+                 file_name="Lanterns.S01E08.2160p.WEB-DL-GRP.mkv")]})
+    job = lanterns_job()
+    await bridge.enqueue(job, "test")
+    job.status = JobState.FAILED_RETRYABLE.value
+    job.next_attempt_at = 0.0
+    await bridge.store.update_job(job, {"status", "next_attempt_at"})
+    await bridge.process_job(job)
+    fresh = await bridge.store.get_job(job.id)
+    assert fresh.status in (JobState.COMPLETED.value,
+                            JobState.FAILED_RETRYABLE.value,
+                            JobState.BLOCKED_MAPPING.value)
+    assert fresh.resolver_item_id is not None

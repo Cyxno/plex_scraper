@@ -271,12 +271,15 @@ class IngestBridge:
                 return
 
         # 1) circuit-gate: bij open provider nul HTTP-kosten, wél ordelijke
-        #    PROVIDER_WAIT-state (Phases 6/16)
+        #    PROVIDER_WAIT-state (Phases 6/16). PROVIDER_WAIT-jobs worden
+        #    expliciet mee-genomen zodat de cooldown netjes verlengt.
         blocked = self.circuit.blocked()
-        if job.status in (JobState.QUEUED.value, JobState.RESOLVING.value,
-                          JobState.FAILED_RETRYABLE.value,
-                          JobState.IDENTITY_VERIFYING.value,
-                          JobState.REGISTERING.value) and blocked:
+        if blocked and job.status in (JobState.QUEUED.value,
+                                      JobState.RESOLVING.value,
+                                      JobState.FAILED_RETRYABLE.value,
+                                      JobState.IDENTITY_VERIFYING.value,
+                                      JobState.REGISTERING.value,
+                                      JobState.PROVIDER_WAIT.value):
             retry_in = max(
                 (self.circuit.snapshot().get("scrapers", {})
                  .get(name, {}).get("retry_in_s", 0) for name in blocked),
@@ -286,6 +289,12 @@ class IngestBridge:
                 provider_block=f"circuit open: {','.join(blocked)}",
                 retry_in=max(retry_in, 30.0))
             return
+
+        # 2) circuit weer gezond → deferred jobs keren terug in de pipeline
+        #    (anders zijn PROVIDER_WAIT/FAILED_RETRYABLE doodlopende states)
+        if job.status in (JobState.PROVIDER_WAIT.value,
+                          JobState.FAILED_RETRYABLE.value):
+            await self._set_state(job, JobState.QUEUED)
 
         if job.status == JobState.QUEUED.value:
             await self._identity_and_register(job)
