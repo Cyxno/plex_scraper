@@ -578,3 +578,17 @@ async def test_stuck_grab_does_not_claim_bridge(ingest_settings, scorer):
     assert fresh.resolver_item_id is not None
     assert fresh.status in (JobState.COMPLETED.value,
                             JobState.FAILED_RETRYABLE.value)
+
+
+def test_dead_grab_record_does_not_claim(ingest_settings):
+    """downloadClientUnavailable/None en completed+warning zijn geen actieve
+    grab (regressie: `or "ok"`-default behandelde dode grabs als actief)."""
+    act = IngestBridge._grab_record_active
+    assert act({"status": "downloading", "trackedDownloadStatus": "ok"})
+    assert act({"status": "completed", "trackedDownloadStatus": "ok"})
+    assert act({"status": "importPending", "trackedDownloadStatus": "ok"})
+    assert not act({"status": "downloadClientUnavailable",
+                    "trackedDownloadStatus": None})
+    assert not act({"status": "failed", "trackedDownloadStatus": "error"})
+    assert not act({"status": "completed",
+                    "trackedDownloadStatus": "warning"})

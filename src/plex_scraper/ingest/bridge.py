@@ -211,6 +211,20 @@ class IngestBridge:
         except (ArrUnavailable, ValueError, IndexError):
             return None
 
+    _DEAD_GRAB_STATUSES = frozenset(
+        {"downloadclientunavailable", "failed"})
+
+    @staticmethod
+    def _grab_record_active(r: dict) -> bool:
+        """Eén queue-record = actieve grab? Dode grabs (client weg, failed)
+        en stuck imports (completed+warning: onleesbaar decypharr-FUSE-pad)
+        claimen NIET — daar neemt de bridge het over."""
+        status = (r.get("status") or "").lower()
+        tds = (r.get("trackedDownloadStatus") or "ok").lower()
+        if status in IngestBridge._DEAD_GRAB_STATUSES:
+            return False
+        return tds not in ("error", "warning")
+
     async def _arr_grab_active(self, job: IngestJob) -> bool:
         """Phase 22 (dual-ingest-ownership): is de arr dit item actief aan het
         grijpen/downloaden via een legacy download-client? Alleen een GEZONDE
@@ -229,8 +243,7 @@ class IngestBridge:
                     int(job.arr_item_id.split(":")[0]))
         except (ArrUnavailable, ValueError, IndexError):
             return False
-        return any((r.get("trackedDownloadStatus") or "ok") == "ok"
-                   for r in recs)
+        return any(self._grab_record_active(r) for r in recs)
 
     async def process_job(self, job: IngestJob) -> None:
         job.attempts += 1
