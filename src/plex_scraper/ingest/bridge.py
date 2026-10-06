@@ -512,10 +512,12 @@ class IngestBridge:
                 break
             await asyncio.sleep(probe_wait)
         if not probe.get("ok"):
+            # materiaalisatie van de verse .ids-node in de rehydrate-FUSE kan
+            # enkele minuten duren — korteriek retryen i.p.v. 300s
             await self._set_state(
                 job, JobState.FAILED_RETRYABLE,
                 error=f"plex-namespace probe failed: {probe.get('error')}",
-                retry_in=300.0)
+                retry_in=90.0)
             return
 
         # Plex-scan trigger (bounded) en part-verificatie
