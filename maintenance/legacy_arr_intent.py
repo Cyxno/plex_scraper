@@ -28,17 +28,21 @@ OUTPUT_PATH = "/data/legacy-arr-intent.json"
 
 
 def classify_intent(dead: bool, arr_has_file: bool | None,
-                    arr_monitored: bool | None) -> str:
-    """Pure classificatie (Phase 34/35). arr_monitored=None = geen arr-match."""
+                    arr_monitored: bool | None,
+                    managed: bool | None = None) -> str:
+    """Pure classificatie (Phase 34/35). arr_monitored=None = geen arr-match.
+    managed=True = bewezen canonical-.ids (géén legacy-label); managed=False
+    of None (onbekend) = klassieke Legacy-labels bij levend bestand."""
     if arr_monitored is None:
         return "NO_ARR_MATCH"
     if dead:
         if arr_has_file:
             return "MONITORED_PRESENT_RUNTIME_DEAD"
         return "MONITORED_MISSING" if arr_monitored else "UNMONITORED"
-    if arr_monitored:
-        return "MONITORED_WORKING_LEGACY"
-    return "UNMONITORED_WORKING_LEGACY"
+    if managed is True:
+        return "MONITORED_MANAGED" if arr_monitored else "UNMONITORED_MANAGED"
+    return "MONITORED_WORKING_LEGACY" if arr_monitored \
+        else "UNMONITORED_WORKING_LEGACY"
 
 
 def recovery_priority(cls: str) -> int:
@@ -48,9 +52,11 @@ def recovery_priority(cls: str) -> int:
         "MONITORED_PRESENT_RUNTIME_DEAD": 0,
         "MONITORED_MISSING": 1,
         "BLOCKED_NO_SOURCE": 2,
-        "MONITORED_WORKING_LEGACY": 3,
         "UNMONITORED": 4,
+        "MONITORED_WORKING_LEGACY": 3,
         "UNMONITORED_WORKING_LEGACY": 5,
+        "MONITORED_MANAGED": 7,
+        "UNMONITORED_MANAGED": 8,
         "NO_ARR_MATCH": 6,
     }.get(cls, 9)
 
@@ -142,15 +148,46 @@ print(json.dumps(out))
 """
 
 
-def read_probe_script(path: str) -> str:
+def read_probe_script() -> str:
+    """Bulk-probe-template: argv[1] = JSON-lijst paden → {pad: ok} één-regel.
+    Per bestand een SIGALRM(10s): een hangende FUSE-read (EIO-retry) mag de
+    chunk nooit blokkeren."""
     return (
-        "import json,sys,os\n"
-        "p=sys.argv[1]\n"
-        "try:\n"
-        "    with open(p,'rb') as fh: d=fh.read(65536)\n"
-        "    print(json.dumps({'ok': bool(d)}))\n"
-        "except OSError as e:\n"
-        "    print(json.dumps({'ok': False, 'err': repr(e)[:80]}))\n")
+        "import json,sys,os,signal\n"
+        "paths=json.loads(sys.argv[1])\n"
+        "if isinstance(paths, str): paths=[paths]\n"
+        "out={}\n"
+        "class _TO(Exception): pass\n"
+        "def _alarm(sig, frm): raise _TO()\n"
+        "signal.signal(signal.SIGALRM, _alarm)\n"
+        "for p in paths:\n"
+        "    try:\n"
+        "        signal.alarm(10)\n"
+        "        with open(p,'rb') as fh: d=fh.read(65536)\n"
+        "        signal.alarm(0)\n"
+        "        out[p]=bool(d)\n"
+        "    except (OSError, _TO):\n"
+        "        try: signal.alarm(0)\n"
+        "        except Exception: pass\n"
+        "        out[p]=False\n"
+        "print(json.dumps(out))\n")
+
+
+BULK_PROBE_CHUNK = 100
+
+
+async def bulk_probe(plex, paths) -> dict:
+    """Alle paden in chunks leesproberen (1 docker-exec per chunk)."""
+    out: dict[str, bool] = {}
+    script = read_probe_script()
+    paths = [p for p in paths if p]
+    for i in range(0, len(paths), BULK_PROBE_CHUNK):
+        chunk = paths[i:i + BULK_PROBE_CHUNK]
+        res = await plex._exec(script, json.dumps(chunk))
+        for k, v in res.items():
+            if isinstance(v, bool):
+                out[k] = v
+    return out
 
 
 class IntentRunner:
@@ -163,7 +200,15 @@ class IntentRunner:
         self.radarr = radarr
         self.output_path = output_path
 
-    async def run(self, limit_probes: int | None = None) -> dict:
+    async def run(self, limit_probes: int | None = None,
+                  probe_filter=None,
+                  probe_results: dict | None = None,
+                  link_is_managed=None) -> dict:
+        """probe_filter(files) -> bool: alleen die items leesproberen
+        (bijv. legacy-bestanden buiten .ids — managed-.ids is al bewezen).
+        probe_results: vooraf berekende {pad: ok}-map (bulk_probe) — dan
+        geen per-item exec meer.
+        link_is_managed(files) -> bool: is dit bestand canonical-.ids?"""
         dump = await self.plex._exec(PLEX_DUMP_SCRIPT)
         if "tv" not in dump:
             raise RuntimeError(f"plex dump failed: {str(dump)[:160]}")
@@ -183,10 +228,15 @@ class IntentRunner:
         for ep in dump["tv"]:
             files = [f for f in (ep.get("files") or []) if f]
             dead = not files
-            if not dead and limit_probes is None:
-                # dead-check via leesprobe op het eerste bestand
-                probe = await self.plex._exec(read_probe_script(files[0]))
-                dead = not probe.get("ok")
+            if not dead:
+                if probe_results is not None:
+                    dead = not probe_results.get(files[0], False)
+                elif limit_probes is None and (
+                        probe_filter is None or probe_filter(files)):
+                    # dead-check via leesprobe op het eerste bestand
+                    probe = await self.plex._exec(read_probe_script(),
+                                                  json.dumps([files[0]]))
+                    dead = not bool(probe.get(files[0]))
             s = match_series(sonarr_series, _int_or_none(ep.get("tvdb")),
                              ep.get("show"))
             arr_monitored = None
@@ -198,7 +248,8 @@ class IntentRunner:
                     arr_has_file = True     # leesbaar bestand = present genoeg
                 elif self.sonarr is not None:
                     arr_has_file = await self._sonarr_has_file(s, ep)
-            cls = classify_intent(dead, arr_has_file, arr_monitored)
+            cls = classify_intent(dead, arr_has_file, arr_monitored,
+                                  managed=link_is_managed(files))
             if dead:
                 dead_tv += 1
             results["tv"].append({
@@ -206,6 +257,7 @@ class IntentRunner:
                 "episode": ep.get("episode"), "tvdb": ep.get("tvdb"),
                 "dead": dead, "arr": (s or {}).get("title"),
                 "arr_monitored": arr_monitored, "arr_has_file": arr_has_file,
+                "managed": link_is_managed(files),
                 "classification": cls,
                 "priority": recovery_priority(cls),
                 "file": (files[0][-100:] if files else None)})
@@ -213,17 +265,23 @@ class IntentRunner:
             files = [f for f in (mv.get("files") or []) if f]
             dead = not files
             if not dead:
-                probe = await self.plex._exec(read_probe_script(files[0]))
-                dead = not probe.get("ok")
+                if probe_results is not None:
+                    dead = not probe_results.get(files[0], False)
+                else:
+                    probe = await self.plex._exec(read_probe_script(),
+                                                  json.dumps([files[0]]))
+                    dead = not bool(probe.get(files[0]))
             rec = match_movie(radarr_movies, mv.get("imdb"),
                               str(mv.get("tmdb") or ""), mv.get("title"),
                               mv.get("year"))
             arr_monitored = None if rec is None else bool(rec.get("monitored"))
             arr_has_file = None if rec is None else bool(rec.get("hasFile"))
-            cls = classify_intent(dead, arr_has_file, arr_monitored)
+            cls = classify_intent(dead, arr_has_file, arr_monitored,
+                                  managed=link_is_managed(files))
             results["movies"].append({
                 "title": mv.get("title"), "year": mv.get("year"),
                 "imdb": mv.get("imdb"), "dead": dead,
+                "managed": link_is_managed(files),
                 "arr": (rec or {}).get("title"),
                 "arr_monitored": arr_monitored, "arr_has_file": arr_has_file,
                 "classification": cls,

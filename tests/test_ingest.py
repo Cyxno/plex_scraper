@@ -494,6 +494,14 @@ def test_arr_intent_classification_pure():
         "UNMONITORED_WORKING_LEGACY"
     assert classify_intent(dead=False, arr_has_file=True, arr_monitored=None) == \
         "NO_ARR_MATCH"
+    # managed=True (.ids) → gezonde canonical-media is GEEN legacy
+    assert classify_intent(dead=False, arr_has_file=True, arr_monitored=True,
+                           managed=True) == "MONITORED_MANAGED"
+    assert classify_intent(dead=False, arr_has_file=True, arr_monitored=False,
+                           managed=True) == "UNMONITORED_MANAGED"
+    # managed=False (echt niet-canonical bestand) → Legacy-label
+    assert classify_intent(dead=False, arr_has_file=True, arr_monitored=True,
+                           managed=False) == "MONITORED_WORKING_LEGACY"
 
 
 def test_delivery_symlink_mapping(ingest_settings):

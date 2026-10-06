@@ -23,11 +23,12 @@ PLEX_CONTAINER = "plex"
 class PlexExecClient:
     def __init__(self, container: str = PLEX_CONTAINER,
                  docker_sock: str = DOCKER_SOCK, section_tv: int = 2,
-                 section_movies: int = 1):
+                 section_movies: int = 1, sock_timeout: float = 120.0):
         self.container = container
         self.sock = docker_sock
         self.section_tv = section_tv
         self.section_movies = section_movies
+        self.sock_timeout = sock_timeout
 
     # ------------------------------------------------------------ plumbing
     def _docker(self, method: str, path: str, body: dict | None = None) -> dict:
@@ -35,7 +36,7 @@ class PlexExecClient:
         import http.client
         import socket as _s
         s = _s.socket(_s.AF_UNIX, _s.SOCK_STREAM)
-        s.settimeout(120)
+        s.settimeout(self.sock_timeout)
         s.connect(self.sock)
         payload = json.dumps(body or {}).encode()
         req = (f"{method} /v1.41{path} HTTP/1.1\r\nHost: docker\r\n"
