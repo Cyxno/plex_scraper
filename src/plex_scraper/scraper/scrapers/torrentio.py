@@ -51,8 +51,11 @@ class TorrentioScraper(Scraper):
             path = f"/stream/movie/{imdb}.json"
         url = f"{self.base}{path}"
 
-        async with self._pace:                       # ~1 req/s self-pacing
-            delay = self._last_request + 1.1 - asyncio.get_event_loop().time()
+        async with self._pace:                       # ~1 req/3s self-pacing:
+            # na circuit-herstel komt een vloed van ingehaald werk los; 1.1s
+            # haalde binnen seconden weer de 429-grens (ingest-hardening:
+            # provider-capaciteit gerespecteerd, geen storm na recover)
+            delay = self._last_request + 3.0 - asyncio.get_event_loop().time()
             if delay > 0:
                 await asyncio.sleep(delay)
             try:
