@@ -598,9 +598,15 @@ class Store:
         return await self.run(fn)
 
     async def due_jobs(self, now_ts: float, limit: int = 5) -> list:
-        """Worker-invoer: actieve jobs waarvan next_attempt_at verstreken is,
-        oudste-next eerst; PROVIDER_WAIT expliciet meegenomen (het circuit
-        bepaalt of er écht gezocht wordt)."""
+        """Worker-invoer: actieve jobs waarvan next_attempt_at verstreken is.
+
+        Age-aware prioriteit (Phase 10): nieuw gelucht eerst, oude backlog
+        als achtergrond — oud werk mag nieuwe releases niet vertragen.
+          tier 0: air-date < 48u (new release)
+          tier 1: air-date < 14d (recent backlog)
+          tier 2: ouder/onbekend (background catch-up)
+        Binnen een tier: next_attempt_at ASC (deferred schuift naar achteren —
+        dat is tegelijk de fairness-round-robin, Phase 11)."""
         def fn(c: sqlite3.Connection):
             self._ingest_schema(c)
             rows = c.execute(
@@ -609,8 +615,12 @@ class Store:
                 "'PROVIDER_WAIT','READY','DELIVERING','PLEX_REFRESH',"
                 "'FAILED_RETRYABLE') "
                 "AND next_attempt_at <= ? "
-                "ORDER BY next_attempt_at ASC LIMIT ?",
-                (now_ts, limit)).fetchall()
+                "ORDER BY CASE WHEN air_date_utc IS NULL THEN 2 "
+                "WHEN air_date_utc >= datetime(?, 'unixepoch', '-2 days') "
+                "     THEN 0 "
+                "WHEN air_date_utc >= datetime(?, 'unixepoch', '-14 days') "
+                "     THEN 1 ELSE 2 END, next_attempt_at ASC LIMIT ?",
+                (now_ts, now_ts, now_ts, limit)).fetchall()
             return [self._row_to_job(r) for r in rows]
         return await self.run(fn)
 

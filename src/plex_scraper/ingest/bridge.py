@@ -527,7 +527,12 @@ class IngestBridge:
                 retry_in=90.0)
             return
 
-        # Plex-scan trigger (bounded) en part-verificatie
+        # Plex-scan trigger (bounded) en part-verificatie. De leesprobe hier-
+        # boven is het harde playability-bewijs; de part-match is obser-
+        # vationeel: episodes die al een (mogelijk dode) part hebben krijgend
+        # onze part pas op Plex' eigen scan-cadans. De arr-reconcile (hasFile)
+        # is de acceptatie-arbiter — daarom blokkeert een uitblijvende part-
+        # match de delivery niet langer (productie: 38 jobs vast op deze poll).
         section = self.plex_tv_section if item.kind == "episode" \
             else self.plex_movie_section
         scan_dir = os.path.dirname(link_plex)   # plex-namespace-pad!
@@ -537,6 +542,8 @@ class IngestBridge:
             await self.store.add_event("ingest_plex_scan_failed",
                                        item_id=item.id, error=repr(exc)[:160])
         verified = False
+        file_match = False
+        present = False
         suffix = os.path.basename(link)
         wait = float(getattr(self.s, "ingest_delivery_probe_wait_s", 20.0))
         for attempt in range(int(getattr(self.s, "ingest_delivery_probe_retries", 3))):
@@ -547,11 +554,13 @@ class IngestBridge:
                         job.series or item.series or "", item.season or 0,
                         item.episode or 0, guid_imdb=item.show_imdb_id,
                         file_suffix=suffix)
-                    verified = bool(res.get("present")) and \
-                        bool(res.get("file_match"))
+                    present = bool(res.get("present"))
+                    file_match = bool(res.get("file_match"))
+                    verified = present and file_match
                 else:
                     res = await self.plex.read_probe(link_plex)
-                    verified = bool(res.get("ok"))
+                    present = verified = bool(res.get("ok"))
+                    file_match = True
                 if verified:
                     break
             except Exception as exc:                   # noqa: BLE001
@@ -559,14 +568,13 @@ class IngestBridge:
                                            item_id=item.id,
                                            error=repr(exc)[:160])
         self.metrics["plex_verifications"] += 1
+        await self.store.add_event(
+            "ingest_plex_verified" if verified else "ingest_plex_part_pending",
+            item_id=item.id, link=link, present=present, file_match=file_match)
         if not verified:
-            await self._set_state(
-                job, JobState.FAILED_RETRYABLE,
-                error="plex part-verificatie bleef uit (scan nog niet verwerkt?)",
-                retry_in=600.0)
-            return
-        await self.store.add_event("ingest_plex_verified", item_id=item.id,
-                                   link=link)
+            # playability is bewezen (leesprobe), part-match volgt later via
+            # Plex' scan-cadans — niet blockeren (fase 16: residue beleid)
+            pass
 
         # Phase 20: arr laat de deliver herkennen via supported commands
         await self._arr_reconcile(job)

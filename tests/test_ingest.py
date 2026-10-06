@@ -672,3 +672,53 @@ def test_to_plex_ns_translation():
         "/symlinks/TV Shows/X"
     # onbekend prefix → onveranderd (fail-loud blijft bestaan)
     assert delivery.to_plex_ns("/other/x", "/mnt/vm_storage/symlinks") == "/other/x"
+
+
+# ----------------------- Phase 10 (age-aware prioriteit) + delivery-herstructurering
+@pytest.mark.asyncio
+async def test_due_jobs_prioritize_new_releases(ingest_settings, scorer):
+    """Nieuwe release (48u) gaat vóór oude backlog (14d+) — ook als de oude
+    job al langer wacht (Phase 10: oud werk mag nieuwe releases niet inhalen)."""
+    bridge, engine = make_bridge(ingest_settings, scorer)
+    old = lanterns_job(episode_id=901)
+    old.dedupe_key = "tv:imdb:tt26545992:9:1"
+    old.air_date_utc = "2026-09-01T00:00:00Z"          # >14d geleden
+    old.next_attempt_at = 0.0                          # veel langer wachtend
+    new = lanterns_job(episode_id=902)
+    new.dedupe_key = "tv:imdb:tt26545992:9:2"
+    new.air_date_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(
+        time.time() - 3600))                           # 1u geleden
+    new.next_attempt_at = time.time() - 1              # korter wachtend
+    await bridge.enqueue(old, "test")
+    await bridge.enqueue(new, "test")
+    due = await bridge.store.due_jobs(time.time(), limit=2)
+    assert [j.dedupe_key for j in due][0] == new.dedupe_key
+
+
+@pytest.mark.asyncio
+async def test_delivery_proceeds_to_arr_without_plex_part_match(
+        ingest_settings, scorer):
+    """Part-match op Plex' scan-cadans blokkeert niet langer: leesprobe is het
+    playability-bewijs, de arr-reconcile is de arbiter (productie: 38 jobs
+    vast op 'part-verificatie bleef uit' terwijl de arr het bestand al zag)."""
+    class PartialPlex(FakePlex):
+        async def find_episode(self, show_title, season, episode,
+                               guid_imdb=None, file_suffix=None):
+            return {"present": True, "file_match": False}   # nooit matchend
+
+    s = FakeSeries(58, episodes=[FakeEpisode(2526, 58, episodeNumber=8)])
+    sonarr = FakeSonarr([s])
+    bridge, engine = make_bridge(
+        ingest_settings, scorer, sonarr=sonarr, plex=PartialPlex(True),
+        provider_specs={"cand1": {"size": 4096}},
+        search_results={"episode:tt26545992:1:8": [
+            cand("cand1", "Lanterns.S01E08.2160p.WEB-DL-GRP",
+                 size=3_000_000_000,
+                 file_name="Lanterns.S01E08.2160p.WEB-DL-GRP.mkv")]})
+    job = lanterns_job()
+    await bridge.enqueue(job, "test")
+    await bridge.process_job(job)
+    fresh = await bridge.store.get_job(job.id)
+    # zonder part-match wél naar de arr-reconcile gegaan (rescan → hasFile)
+    assert fresh.status == JobState.COMPLETED.value
+    assert sonarr.rescans == [58]
