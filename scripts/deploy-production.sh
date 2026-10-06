@@ -62,6 +62,14 @@ sleep 30
 docker exec plex sh -c 'ls /mnt/remote/nzbdav/ >/dev/null 2>&1' \
   || { echo "Plex ziet de mount niet — HANDMATIG INGRIJPEN"; exit 1; }
 
+echo "== arr-herstart (zelfde reden als plex: oude FUSE-bind = 'Socket not connected') =="
+docker restart sonarr radarr 2>/dev/null || true
+sleep 20
+docker exec sonarr sh -c 'ls /mnt/remote/nzbdav/.ids/ >/dev/null 2>&1' \
+  || { echo "Sonarr ziet de mount niet — HANDMATIG INGRIJPEN"; exit 1; }
+docker exec radarr sh -c 'ls /mnt/remote/nzbdav/.ids/ >/dev/null 2>&1' \
+  || { echo "Radarr ziet de mount niet — HANDMATIG INGRIJPEN"; exit 1; }
+
 echo "== sentinels =="
 docker exec plex sh -c 'test -e "/symlinks/TV Shows/MobLand (2025)/Season 2"' \
   && echo "OK: MobLand-tree bereikbaar in Plex-namespace"
