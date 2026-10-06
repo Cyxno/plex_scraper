@@ -127,6 +127,8 @@ class RadarrClient(_ArrClient):
         return await self._get(f"/api/v3/movie/{movie_id}")
 
     async def wanted_missing(self, page_size: int = 200, max_pages: int = 10):
+        # Radarr wanted/missing-records ZIJN de movie-resource (veld `id`,
+        # géén `movieId`) — movies_map is dus een no-op-verrijking.
         movies_map = {mv["id"]: mv for mv in await self.movies_all()}
         for page in range(1, max_pages + 1):
             data = await self._get(
@@ -135,7 +137,7 @@ class RadarrClient(_ArrClient):
                         "sortDir": "descending", "page": page,
                         "pageSize": page_size})
             for rec in data.get("records") or []:
-                yield rec, movies_map.get(rec.get("movieId"))
+                yield rec, movies_map.get(rec.get("movieId") or rec.get("id"))
             total = data.get("totalRecords") or 0
             if page * page_size >= total:
                 break

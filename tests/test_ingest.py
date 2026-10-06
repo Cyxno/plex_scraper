@@ -126,13 +126,13 @@ class FakeRadarr:
     async def wanted_missing(self, page_size=200, max_pages=10):
         for mv in self.movies:
             if mv.monitored and not mv.hasFile:
-                rec = {"id": mv.id, "movieId": mv.id, "title": mv.title,
+                # echt Radarr v3-shape: record IS de movie-resource — `id`,
+                # geen `movieId` (regressiebewaking voor arr_item_id-mapping)
+                rec = {"id": mv.id, "title": mv.title,
                        "monitored": mv.monitored, "imdbId": mv.imdbId,
-                       "tmdbId": mv.tmdbId, "year": mv.year}
-                mrec = {"id": mv.id, "title": mv.title, "imdbId": mv.imdbId,
-                        "tmdbId": mv.tmdbId, "year": mv.year, "path": mv.path,
-                        "monitored": mv.monitored}
-                yield rec, mrec
+                       "tmdbId": mv.tmdbId, "year": mv.year, "path": mv.path,
+                       "hasFile": False}
+                yield rec, rec
 
     async def movie(self, movie_id: int):
         for mv in self.movies:
@@ -382,6 +382,7 @@ async def test_movie_identity_pipeline(ingest_settings, scorer):
     await bridge.reconcile()
     job = await bridge.store.get_job_by_dedupe("movie:imdb:tt12345678")
     assert job is not None
+    assert job.arr_item_id == "160"            # echte movie-id, geen "None"
     await bridge.process_job(job)
     fresh = await bridge.store.get_job(job.id)
     assert fresh.status in (JobState.COMPLETED.value, JobState.BLOCKED_MAPPING.value)

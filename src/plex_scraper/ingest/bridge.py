@@ -621,12 +621,12 @@ class IngestBridge:
             mv = movie or {}
             job = IngestJob(
                 source="radarr",
-                arr_item_id=f"{mv.get('id') or rec.get('movieId')}",
+                # Radarr wanted-records ZIJN de movie: rec["id"] is de movie-id
+                arr_item_id=f"{mv.get('id') or rec.get('id')}",
                 kind="movie",
                 dedupe_key=IngestJob.movie_dedupe_key(
                     mv.get("imdbId") or rec.get("imdbId"),
-                    str(mv.get("tmdbId") or rec.get("tmdbId") or "")),
-                title=mv.get("title") or rec.get("title") or "",
+                    str(mv.get("tmdbId") or rec.get("tmdbId") or "")),                title=mv.get("title") or rec.get("title") or "",
                 year=mv.get("year") or rec.get("year"),
                 imdb_id=mv.get("imdbId") or rec.get("imdbId"),
                 tmdb_id=str(mv.get("tmdbId") or rec.get("tmdbId") or ""),
