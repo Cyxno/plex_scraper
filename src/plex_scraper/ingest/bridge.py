@@ -547,7 +547,7 @@ class IngestBridge:
                     verified = bool(res.get("present")) and \
                         bool(res.get("file_match"))
                 else:
-                    res = await self.plex.read_probe(link)
+                    res = await self.plex.read_probe(link_plex)
                     verified = bool(res.get("ok"))
                 if verified:
                     break
