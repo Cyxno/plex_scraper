@@ -52,7 +52,12 @@ class _ArrClient:
         if r.status_code >= 400:
             raise ArrUnavailable(
                 f"{self.name} HTTP {r.status_code}: {r.text[:120]}")
-        return r.json()
+        try:
+            return r.json()
+        except ValueError as exc:
+            # 200 zonder JSON (redirect/HTML) is ook een arr-storing
+            raise ArrUnavailable(
+                f"{self.name} non-JSON response: {r.text[:80]}") from exc
 
     async def _post(self, path: str, payload: dict):
         try:
@@ -67,14 +72,14 @@ class _ArrClient:
         return r.json()
 
     async def health(self) -> list[dict]:
-        return await self._get("/health")
+        return await self._get("/api/v3/health")
 
     async def status_ok(self) -> bool:
-        await self._get("/system/status")
+        await self._get("/api/v3/system/status")
         return True
 
     async def tasks(self) -> list[dict]:
-        return await self._get("/system/task")
+        return await self._get("/api/v3/system/task")
 
 
 class SonarrClient(_ArrClient):
