@@ -291,9 +291,12 @@ class IngestBridge:
             return
 
         # 2) circuit weer gezond → deferred jobs keren terug in de pipeline
-        #    (anders zijn PROVIDER_WAIT/FAILED_RETRYABLE doodlopende states)
+        #    (anders zijn PROVIDER_WAIT/FAILED_RETRYABLE doodlopende states);
+        #    circuit-churn telt NIET als poging — alleen echt pipeline-werk.
         if job.status in (JobState.PROVIDER_WAIT.value,
                           JobState.FAILED_RETRYABLE.value):
+            if job.provider_block and "circuit open" in job.provider_block:
+                job.attempts = 0
             await self._set_state(job, JobState.QUEUED)
 
         if job.status == JobState.QUEUED.value:
@@ -343,10 +346,10 @@ class IngestBridge:
                 provider_block="bootstrap deferred (provider unavailable)",
                 retry_in=max(retry_in, 60.0))
         elif item.status == m.ItemStatus.NO_SOURCE.value:
-            await self._set_state(
-                job, JobState.FAILED_RETRYABLE,
-                error="bootstrap true no-source (candidates=0, provider ok)",
-                retry_in=self._job_backoff(job))
+            # bestaand item met oude/stale NO_SOURCE — laat _resolve hem
+            # opnieuw zoeken (candidate-cache weg, circuit bepaalt); pas na
+            # max_attempts échte no-matches volgt BLOCKED_NO_SOURCE (Phase 27)
+            await self._set_state(job, JobState.RESOLVING)
         else:
             # bestaand item in tussenstand (RESOLVING/SOURCE_FAILED/...):
             # worker doet in de volgende stap een gewone resolve
