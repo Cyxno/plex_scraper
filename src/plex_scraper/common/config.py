@@ -36,8 +36,10 @@ class Settings:
     torbox_api_token: str = ""
     torbox_base_url: str = "https://api.torbox.app/v1/api"
     scraper_torrentio_base: str = (
-        "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,"
-        "thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,itorrent"
+        # kale stream-endpoint — de providers=-gefilterde addon-variant wordt
+        # door Torrentio streng per-IP gelimiteerd (429 vrijwel altijd), de
+        # kale URL niet (ingest-hardening 2026-10-06, empirisch bewezen)
+        "https://torrentio.strem.fun"
     )
     db_path: str = "/data/state.db"
     config_dir: str = "/config"
