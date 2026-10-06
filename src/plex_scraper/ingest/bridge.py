@@ -499,15 +499,19 @@ class IngestBridge:
             target=target[:160])
 
         # canonical+symlink leesprobes in de PLEX-container (autoritatief).
-        # Verse .ids-nodes hebben even nodig om in de rehydrate-FUSE te
-        # materialiseren (stale negative dentry + eerste validatie-read):
-        # begrensd herproberen i.p.v. direct FAILED_RETRYABLE.
+        # De plex-container mount de symlink-tree onder een ANDERE prefix
+        # (/symlinks i.p.v. /mnt/vm_storage/symlinks) — probe in plex-ns.
+        # Verse .ids-nodes materialiseren bovendien binnen enkele sec; de
+        # begrensde retry vangt de overgang.
+        link_plex = delivery.to_plex_ns(
+            link, getattr(self.s, "symlink_root", ""),
+            getattr(self.s, "plex_symlink_root", "/symlinks"))
         await self._set_state(job, JobState.PLEX_REFRESH)
         probe: dict = {}
         probe_tries = max(int(getattr(self.s, "ingest_plex_probe_retries", 6)), 1)
         probe_wait = float(getattr(self.s, "ingest_plex_probe_wait_s", 5.0))
         for attempt in range(probe_tries):
-            probe = await self.plex.read_probe(link)
+            probe = await self.plex.read_probe(link_plex)
             if probe.get("ok"):
                 break
             await asyncio.sleep(probe_wait)
@@ -523,7 +527,7 @@ class IngestBridge:
         # Plex-scan trigger (bounded) en part-verificatie
         section = self.plex_tv_section if item.kind == "episode" \
             else self.plex_movie_section
-        scan_dir = os.path.dirname(link)
+        scan_dir = os.path.dirname(link_plex)   # plex-namespace-pad!
         try:
             await self.plex.scan_section(section, scan_dir)
         except Exception as exc:                       # noqa: BLE001

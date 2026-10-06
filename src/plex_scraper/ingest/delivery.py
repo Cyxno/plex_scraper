@@ -70,6 +70,17 @@ def atomic_symlink(link_path: str, target: str) -> None:
     os.replace(tmp, link_path)
 
 
+def to_plex_ns(link_path: str, symlink_root: str,
+               plex_symlink_root: str = "/symlinks") -> str:
+    """/mnt/vm_storage/symlinks/X → /symlinks/X — de plex-container mount
+    dezelfde tree onder een ándere prefix; probes/scans moeten de plex-
+    namespace gebruiken (die is autoritatief)."""
+    root = symlink_root.rstrip("/")
+    if link_path.startswith(root + "/"):
+        return plex_symlink_root.rstrip("/") + link_path[len(root):]
+    return link_path
+
+
 def verify_canonical_source_ready(item: m.MediaItem, source: m.Source) -> tuple[bool, str]:
     """Resolver-side precondities vóór delivery (goedkoop, geen Plex-call):
     item READY, actieve bron, canonical plex_path, size bekend."""

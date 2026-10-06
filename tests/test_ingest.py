@@ -659,3 +659,16 @@ async def test_failed_retryable_returns_to_pipeline(ingest_settings, scorer):
                             JobState.FAILED_RETRYABLE.value,
                             JobState.BLOCKED_MAPPING.value)
     assert fresh.resolver_item_id is not None
+
+
+def test_to_plex_ns_translation():
+    """Probes/scans moeten het plex-namespace-prefix gebruiken (regressie:
+    de host-prefix bestaat niet in de plex-container → eeuwige ENOENT)."""
+    assert delivery.to_plex_ns(
+        "/mnt/vm_storage/symlinks/TV Shows/X/Season 1/f.mkv",
+        "/mnt/vm_storage/symlinks", "/symlinks") == "/symlinks/TV Shows/X/Season 1/f.mkv"
+    assert delivery.to_plex_ns(
+        "/mnt/vm_storage/symlinks/TV Shows/X", "/mnt/vm_storage/symlinks") == \
+        "/symlinks/TV Shows/X"
+    # onbekend prefix → onveranderd (fail-loud blijft bestaan)
+    assert delivery.to_plex_ns("/other/x", "/mnt/vm_storage/symlinks") == "/other/x"

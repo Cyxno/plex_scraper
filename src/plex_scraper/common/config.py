@@ -146,6 +146,9 @@ class Settings:
     plex_section_tv: int = 2
     plex_section_movies: int = 1
     symlink_root: str = "/mnt/vm_storage/symlinks"
+    # hoe de symlink-tree BINNEN de plex-container heet (autoritatieve
+    # namespace voor leesprobes/scans; host-prefix verschilt!)
+    plex_symlink_root: str = "/symlinks"
     canonical_root: str = "/mnt/remote/nzbdav"
     sonarr_root_map: str = "/media=TV Shows"           # arrroot=subtree
     radarr_root_map: str = "/media-movies=Movies"
@@ -299,6 +302,8 @@ class Settings:
             plex_section_tv=_int("PLEX_SECTION_TV", cls.plex_section_tv),
             plex_section_movies=_int("PLEX_SECTION_MOVIES", cls.plex_section_movies),
             symlink_root=os.environ.get("SYMLINK_ROOT", cls.symlink_root),
+            plex_symlink_root=os.environ.get(
+                "PLEX_SYMLINK_ROOT", cls.plex_symlink_root),
             canonical_root=os.environ.get("CANONICAL_ROOT", cls.canonical_root),
             sonarr_root_map=os.environ.get("SONARR_ROOT_MAP", cls.sonarr_root_map),
             radarr_root_map=os.environ.get("RADARR_ROOT_MAP", cls.radarr_root_map),
