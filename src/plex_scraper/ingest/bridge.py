@@ -196,9 +196,66 @@ class IngestBridge:
         return done
 
     # ------------------------------------------------------------- pipeline
+    async def _arr_has_file(self, job: IngestJob) -> bool | None:
+        """Phase 17/22: heeft de arr het item al als file? None = niet te
+        achterhalen (client weg / onbekend item) — dan niet blokkeren."""
+        client = self.sonarr if job.source == "sonarr" else self.radarr
+        if client is None:
+            return None
+        try:
+            if job.source == "sonarr":
+                ep = await client.episode(int(job.arr_item_id.split(":")[1]))
+                return bool(ep.get("hasFile"))
+            mv = await client.movie(int(job.arr_item_id.split(":")[0]))
+            return bool(mv.get("hasFile"))
+        except (ArrUnavailable, ValueError, IndexError):
+            return None
+
+    async def _arr_grab_active(self, job: IngestJob) -> bool:
+        """Phase 22 (dual-ingest-ownership): is de arr dit item actief aan het
+        grijpen/downloaden via een legacy download-client? Alleen een GEZONDE
+        grab (trackedDownloadStatus ok) claimt ownership — stuck/warning/error
+        grabs (decypharr-imports die op een onleesbaar FUSE-pad hangen) worden
+        bewust NIET als actief gezien; de bridge neemt die over."""
+        client = self.sonarr if job.source == "sonarr" else self.radarr
+        if client is None:
+            return False
+        try:
+            if job.source == "sonarr":
+                recs = await client.queue_for_episode(
+                    int(job.arr_item_id.split(":")[1]))
+            else:
+                recs = await client.queue_for_movie(
+                    int(job.arr_item_id.split(":")[0]))
+        except (ArrUnavailable, ValueError, IndexError):
+            return False
+        return any((r.get("trackedDownloadStatus") or "ok") == "ok"
+                   for r in recs)
+
     async def process_job(self, job: IngestJob) -> None:
         job.attempts += 1
         await self.store.update_job(job, {"attempts", "updated_at"})
+
+        # 0) ownership-guards (Phase 17/22): arr heeft al een file → klaar;
+        #    arr grijpt actief → defer (geen dubbele delivery).
+        if job.status not in TERMINAL_STATES:
+            has_file = await self._arr_has_file(job)
+            if has_file:
+                await self._complete(job)
+                await self.store.add_event(
+                    "ingest_job_completed_by_arr", ingest_job=job.id,
+                    source=job.source, arr_item_id=job.arr_item_id,
+                    title=job.title,
+                    note="arr heeft file — bridge niet nodig (hasFile=true)")
+                return
+            if job.status in (JobState.QUEUED.value, JobState.RESOLVING.value,
+                              JobState.FAILED_RETRYABLE.value) and \
+                    await self._arr_grab_active(job):
+                await self._set_state(
+                    job, JobState.FAILED_RETRYABLE,
+                    provider_block="arr grab actief (legacy download-client)",
+                    retry_in=900.0)
+                return
 
         # 1) circuit-gate: bij open provider nul HTTP-kosten, wél ordelijke
         #    PROVIDER_WAIT-state (Phases 6/16)
@@ -490,13 +547,22 @@ class IngestBridge:
                     self.metrics["arr_reconciles_ok"] += 1
                     await self._complete(job)
                 else:
-                    # arr ziet de symlink-structuur (nog) niet als episodefile
+                    # arr ziet de symlink-structuur (nog) niet als episodefile:
+                    # eerst begrensd retryen (scan-cadans), daarna pas blocked
                     self.metrics["arr_reconciles_failed"] += 1
-                    await self._set_state(
-                        job, JobState.BLOCKED_MAPPING,
-                        error=f"sonarr hasFile=false na rescan "
-                              f"(episode {ep.get('id')}, bestand bestaat "
-                              f"wel in Plex-namespace)")
+                    if job.attempts >= int(getattr(
+                            self.s, "ingest_job_max_attempts", 8)):
+                        await self._set_state(
+                            job, JobState.BLOCKED_MAPPING,
+                            error=f"sonarr hasFile=false na rescan "
+                                  f"(episode {ep.get('id')}, bestand bestaat "
+                                  f"wel in Plex-namespace)")
+                    else:
+                        await self._set_state(
+                            job, JobState.FAILED_RETRYABLE,
+                            error="sonarr hasFile=false na rescan (retry: "
+                                  "scan-cadans kan trager zijn dan rescan)",
+                            retry_in=600.0)
             else:
                 movie_id = int(job.arr_item_id.split(":")[0])
                 cmd = await client.rescan_movie(movie_id)
@@ -507,9 +573,16 @@ class IngestBridge:
                     await self._complete(job)
                 else:
                     self.metrics["arr_reconciles_failed"] += 1
-                    await self._set_state(
-                        job, JobState.BLOCKED_MAPPING,
-                        error="radarr hasFile=false na rescan")
+                    if job.attempts >= int(getattr(
+                            self.s, "ingest_job_max_attempts", 8)):
+                        await self._set_state(
+                            job, JobState.BLOCKED_MAPPING,
+                            error="radarr hasFile=false na rescan")
+                    else:
+                        await self._set_state(
+                            job, JobState.FAILED_RETRYABLE,
+                            error="radarr hasFile=false na rescan (retry)",
+                            retry_in=600.0)
         except ArrUnavailable as exc:
             await self._set_state(job, JobState.FAILED_RETRYABLE,
                                   error=f"arr reconcile: {exc}", retry_in=300.0)

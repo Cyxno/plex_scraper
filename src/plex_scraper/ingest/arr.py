@@ -103,6 +103,13 @@ class SonarrClient(_ArrClient):
     async def episode(self, episode_id: int) -> dict:
         return await self._get(f"/api/v3/episode/{episode_id}")
 
+    async def queue_for_episode(self, episode_id: int) -> list[dict]:
+        """Activity-queue records voor één episode (grab-ownership-guard)."""
+        data = await self._get("/api/v3/queue",
+                               params={"episodeId": episode_id,
+                                       "pageSize": 20})
+        return data.get("records") or []
+
     async def rescan_series(self, series_id: int) -> dict:
         return await self._post(
             "/api/v3/command", {"name": "RescanSeries", "seriesId": series_id})
@@ -125,6 +132,12 @@ class RadarrClient(_ArrClient):
 
     async def movie(self, movie_id: int) -> dict:
         return await self._get(f"/api/v3/movie/{movie_id}")
+
+    async def queue_for_movie(self, movie_id: int) -> list[dict]:
+        """Activity-queue records voor één movie (grab-ownership-guard)."""
+        data = await self._get("/api/v3/queue",
+                               params={"movieId": movie_id, "pageSize": 20})
+        return data.get("records") or []
 
     async def wanted_missing(self, page_size: int = 200, max_pages: int = 10):
         # Radarr wanted/missing-records ZIJN de movie-resource (veld `id`,

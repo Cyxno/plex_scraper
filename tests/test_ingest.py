@@ -68,6 +68,8 @@ class FakeSonarr:
         self.series_list = series
         self.rescans: list[int] = []
         self._commands = 0
+        # grab-ownership: {episode_id: [queue_record, ...]} (Phase 22-guard)
+        self.queue: dict[int, list[dict]] = {}
         self._done = True
 
     async def _get(self, path: str, params: dict | None = None):
@@ -101,9 +103,17 @@ class FakeSonarr:
                             "monitored": ep.monitored}
         raise ArrUnavailable("unknown episode")
 
+    async def queue_for_episode(self, episode_id: int):
+        return self.queue.get(episode_id, [])
+
     async def rescan_series(self, series_id: int):
         self.rescans.append(series_id)
         self._commands += 1
+        # echte RescanSeries laat Sonarr de geleverde symlink zien → hasFile
+        for s in self.series_list:
+            if s.id == series_id:
+                for ep in s.episodes:
+                    ep.hasFile = True
         return {"id": self._commands}
 
     async def health(self):
@@ -117,6 +127,7 @@ class FakeRadarr:
     def __init__(self, movies: list[FakeMovie]):
         self.movies = movies
         self.rescans: list[int] = []
+        self.queue: dict[int, list[dict]] = {}   # movie_id -> records
 
     async def _get(self, path: str, params: dict | None = None):
         if path.startswith("/api/v3/command/"):
@@ -140,8 +151,15 @@ class FakeRadarr:
                 return {"id": mv.id, "hasFile": mv.hasFile, "title": mv.title}
         raise ArrUnavailable("unknown movie")
 
+    async def queue_for_movie(self, movie_id: int):
+        return self.queue.get(movie_id, [])
+
     async def rescan_movie(self, movie_id: int):
         self.rescans.append(movie_id)
+        # echte RescanMovie laat Radarr de geleverde symlink zien → hasFile
+        for mv in self.movies:
+            if mv.id == movie_id:
+                mv.hasFile = True
         return {"id": movie_id + 100}
 
     async def health(self):
@@ -496,3 +514,67 @@ def test_delivery_symlink_mapping(ingest_settings):
         src, ingest_settings.symlink_root, {"/media-movies": "Movies"},
         canonical_root=ingest_settings.canonical_root)
     assert "/Movies/WB (2026)/" in link2
+
+
+# ----------------------- Phase 17/22 (arr-intent guards: hasFile + grab-claim)
+@pytest.mark.asyncio
+async def test_arr_has_file_completes_without_delivery(ingest_settings, scorer):
+    """hasFile=true in de arr → job COMPLETED zonder registratie/delivery."""
+    s = FakeSeries(58, episodes=[FakeEpisode(2526, 58, episodeNumber=8,
+                                             hasFile=True)])
+    sonarr = FakeSonarr([s])
+    bridge, engine = make_bridge(ingest_settings, scorer, sonarr=sonarr)
+    n_items = len(await engine.store.list_items())
+    job = lanterns_job()
+    await bridge.enqueue(job, "test")
+    await bridge.process_job(job)
+    fresh = await bridge.store.get_job(job.id)
+    assert fresh.status == JobState.COMPLETED.value
+    assert len(await engine.store.list_items()) == n_items   # niets geregistreerd
+
+
+@pytest.mark.asyncio
+async def test_arr_active_grab_defers_resolution(ingest_settings, scorer):
+    """Gezonde grab in de arr-queue → bridge claimt NIET (Phase 22): job
+    deferret, geen resolver-item, geen provider-search."""
+    s = FakeSeries(58, episodes=[FakeEpisode(2526, 58, episodeNumber=8)])
+    sonarr = FakeSonarr([s])
+    sonarr.queue[2526] = [{"status": "downloading",
+                           "trackedDownloadStatus": "ok"}]
+    bridge, engine = make_bridge(
+        ingest_settings, scorer, sonarr=sonarr,
+        provider_specs={"cand1": {"size": 4096}},
+        search_results={"episode:tt26545992:1:8": [
+            cand("cand1", "Lanterns.S01E08.2160p.WEB-DL-GRP",
+                 size=3_000_000_000)]})
+    job = lanterns_job()
+    await bridge.enqueue(job, "test")
+    await bridge.process_job(job)
+    fresh = await bridge.store.get_job(job.id)
+    assert fresh.status == JobState.FAILED_RETRYABLE.value
+    assert "grab" in (fresh.provider_block or "")
+    assert fresh.resolver_item_id is None
+
+
+@pytest.mark.asyncio
+async def test_stuck_grab_does_not_claim_bridge(ingest_settings, scorer):
+    """Stuck/warning-grab (decypharr-op-FUSE-geval) claimt NIET: bridge werkt
+    gewoon af (anders blijft zoiets eeuwig hangen)."""
+    s = FakeSeries(58, episodes=[FakeEpisode(2526, 58, episodeNumber=8)])
+    sonarr = FakeSonarr([s])
+    sonarr.queue[2526] = [{"status": "completed",
+                           "trackedDownloadStatus": "warning"}]
+    bridge, engine = make_bridge(
+        ingest_settings, scorer, sonarr=sonarr, plex=FakePlex(True),
+        provider_specs={"cand1": {"size": 4096}},
+        search_results={"episode:tt26545992:1:8": [
+            cand("cand1", "Lanterns.S01E08.2160p.WEB-DL-GRP",
+                 size=3_000_000_000,
+                 file_name="Lanterns.S01E08.2160p.WEB-DL-GRP.mkv")]})
+    job = lanterns_job()
+    await bridge.enqueue(job, "test")
+    await bridge.process_job(job)
+    fresh = await bridge.store.get_job(job.id)
+    assert fresh.resolver_item_id is not None
+    assert fresh.status in (JobState.COMPLETED.value,
+                            JobState.FAILED_RETRYABLE.value)
