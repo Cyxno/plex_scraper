@@ -131,6 +131,8 @@ class Settings:
     ingest_job_backoff_base_s: float = 300.0           # 5m → 10m → 20m → ... cap
     ingest_job_backoff_max_s: float = 86400.0
     ingest_job_max_attempts: int = 8
+    ingest_plex_probe_retries: int = 6                  # verse .ids-node materialiseert even in de FUSE
+    ingest_plex_probe_wait_s: float = 5.0
     ingest_delivery_probe_retries: int = 3
     ingest_delivery_probe_wait_s: float = 20.0
     sonarr_enabled: bool = False
@@ -277,6 +279,11 @@ class Settings:
             ingest_delivery_probe_wait_s=float(
                 os.environ.get("INGEST_DELIVERY_PROBE_WAIT_S",
                                cls.ingest_delivery_probe_wait_s)),
+            ingest_plex_probe_retries=_int(
+                "INGEST_PLEX_PROBE_RETRIES", cls.ingest_plex_probe_retries),
+            ingest_plex_probe_wait_s=float(
+                os.environ.get("INGEST_PLEX_PROBE_WAIT_S",
+                               cls.ingest_plex_probe_wait_s)),
             sonarr_enabled=_bool("SONARR_ENABLED", False),
             sonarr_url=os.environ.get("SONARR_URL", cls.sonarr_url),
             sonarr_api_key=(

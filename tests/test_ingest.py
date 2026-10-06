@@ -202,6 +202,8 @@ def ingest_settings(tmp_path):
                  canonical_root=str(tmp_path / "canonical"),
                  ingest_batch_size=1,
                  ingest_delivery_probe_retries=1,
+                 ingest_plex_probe_retries=1,
+                 ingest_plex_probe_wait_s=0.0,
                  ingest_delivery_probe_wait_s=0.0,
                  ingest_job_backoff_base_s=60.0)
     (Path(tmp_path) / "canonical" / ".ids").mkdir(parents=True)

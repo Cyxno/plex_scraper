@@ -498,9 +498,19 @@ class IngestBridge:
             "ingest_symlink_created", item_id=item.id, link=link,
             target=target[:160])
 
-        # canonical+symlink leesprobes in de PLEX-container (autoritatief)
+        # canonical+symlink leesprobes in de PLEX-container (autoritatief).
+        # Verse .ids-nodes hebben even nodig om in de rehydrate-FUSE te
+        # materialiseren (stale negative dentry + eerste validatie-read):
+        # begrensd herproberen i.p.v. direct FAILED_RETRYABLE.
         await self._set_state(job, JobState.PLEX_REFRESH)
-        probe = await self.plex.read_probe(link)
+        probe: dict = {}
+        probe_tries = max(int(getattr(self.s, "ingest_plex_probe_retries", 6)), 1)
+        probe_wait = float(getattr(self.s, "ingest_plex_probe_wait_s", 5.0))
+        for attempt in range(probe_tries):
+            probe = await self.plex.read_probe(link)
+            if probe.get("ok"):
+                break
+            await asyncio.sleep(probe_wait)
         if not probe.get("ok"):
             await self._set_state(
                 job, JobState.FAILED_RETRYABLE,
