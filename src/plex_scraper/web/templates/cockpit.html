@@ -231,6 +231,7 @@ summary{cursor:pointer;color:var(--accent);font-size:12px}
     <button data-s="activity" aria-label="Activity"><span class="ico">≡</span>Activity</button>
     <button data-s="issues" aria-label="Issues"><span class="ico">⚠</span>Issues<span class="cnt" id="nav-issues"></span></button>
     <button data-s="library" aria-label="Library"><span class="ico">▤</span>Library</button>
+    <button data-s="ingest" aria-label="Ingest"><span class="ico">⇩</span>Ingest<span class="cnt" id="nav-ingest"></span></button>
     <button data-s="jobs" aria-label="Jobs"><span class="ico">◷</span>Jobs</button>
     <button data-s="providers" aria-label="Providers"><span class="ico">⛁</span>Providers</button>
   </nav>
@@ -281,11 +282,13 @@ summary{cursor:pointer;color:var(--accent);font-size:12px}
       <option value="">All</option><option value="MOVIES">Movies</option>
       <option value="TV">TV episodes</option><option>READY</option>
       <option>NO_SOURCE</option><option>RESOLVING</option><option>SOURCE_FAILED</option>
+      <option>PROVIDER_WAIT</option>
     </select>
     <span class="muted num" id="libcount"></span>
   </div>
   <div class="tablewrap"><table id="libtable"></table></div>
 </section>
+<section id="s-ingest"><div id="ingest"></div></section>
 <section id="s-jobs"><div id="jobs"></div></section>
 <section id="s-providers"><div id="providers"></div></section>
 </main>
@@ -434,13 +437,19 @@ function overviewHtml(d){
     ? `${cov.legacy_dead} legacy media items are unavailable`
     : d.issues.no_source ? `${d.issues.no_source} items need attention`
     : L.identity_incomplete ? `${L.identity_incomplete} items identity incomplete`
-    : L.identity_incomplete ? `${L.identity_incomplete} items identity incomplete`
     : 'all managed items healthy';
+  const HLABEL = {HEALTHY:'System healthy', DEGRADED:'Degraded', ATTENTION:'Attention',
+    ERROR:'Error', HEALTHY_WITH_LEGACY_GAPS:'Healthy · legacy gaps',
+    PROVIDER_WAIT:'Provider paused'};
   const banner = badge(d.health, d.health==='HEALTHY'?'SUCCESS':d.health)
-    + `<span class="h">${{HEALTHY:'System healthy',DEGRADED:'Degraded',ATTENTION:'Attention',ERROR:'Error'}[d.health]||d.health}</span>`
-    + `<span class="muted" style="font-weight:400">— ${cause}</span>`;
+    + `<span class="h">${HLABEL[d.health]||d.health}</span>`
+    + `<span class="muted" style="font-weight:400">— ${cause}</span>`
+    + ((d.ingest && d.ingest.provider && d.ingest.provider.blocked && d.ingest.provider.blocked.length)
+      ? `<span class="muted" style="font-weight:400"> · ingest: provider rate limited (${esc(d.ingest.provider.blocked.join(', '))}), retry in ${fmtIn(d.ingest.provider.retry_in_s||0)}, queue paused safely</span>`
+      : '');
   const kpilib = kpi('Ready',L.ready,'ok',`${L.total} total`)
     + kpi('Resolving',L.resolving,L.resolving?'run':'')
+    + kpi('Provider wait',L.provider_wait||0,L.provider_wait?'warn':'','not failed')
     + kpi('Issues',L.no_source,L.no_source?'err':'ok')
     + kpi('Identity incomplete',L.identity_incomplete,L.identity_incomplete?'warn':'ok');
   let kpiauto = kpi('Active streams',d.playback.active,d.playback.active?'run':'')
@@ -609,14 +618,84 @@ function jobsHtml(d){
 }
 /* ---------- providers ---------- */
 function providersHtml(d){
-  return d.providers.map(p=>`
+  const rl = d.rate_limit
+    ? `<div class="banner DEGRADED" style="margin-bottom:10px">${badge('DEGRADED','DEGRADED')}` +
+      `<span class="h">Provider rate limited</span><span class="muted" style="font-weight:400">— ${esc(d.rate_limit.human)}` +
+      ` · retry in <b class="num" data-retry-until="${Date.now()+d.rate_limit.retry_in_s*1000}">${fmtIn(d.rate_limit.retry_in_s)}</b>` +
+      ` · <span class="muted">source: ${esc(d.rate_limit.retry_source||'backoff')}</span></span></div>`
+    : '';
+  const circuit = d.circuit ? Object.entries(d.circuit.scrapers||{}).map(([name, sc])=>
+    `<div class="panel"><h3>circuit · ${esc(name)} ${badge(sc.state, sc.state==='HEALTHY'?'SUCCESS':'WARNING')}</h3>
+      <div class="grid kpis" style="margin-top:6px">
+      ${kpi('Retry in', sc.retry_in_s?fmtIn(sc.retry_in_s):'–')}
+      ${kpi('Consecutive fails', sc.consecutive_failures, sc.consecutive_failures?'warn':'')}
+      ${kpi('Retry source', sc.retry_source||'–')}
+      ${kpi('Half-open probe', sc.half_open_probe?'armed':'no')}
+      </div>
+      ${sc.last_error?`<div class="muted mono" style="margin-top:6px">${esc(sc.last_error)}</div>`:''}
+    </div>`).join('')
+    + `<div class="panel"><h3>Circuit metrics</h3><div class="grid kpis" style="margin-top:6px">
+      ${kpi('429 events', (d.circuit.metrics||{}).rate_limit_events??0)}
+      ${kpi('Backend errors', (d.circuit.metrics||{}).backend_error_events??0)}
+      ${kpi('Circuit opened', (d.circuit.metrics||{}).circuit_opened??0)}
+      ${kpi('Recovered', (d.circuit.metrics||{}).circuit_recovered??0,'ok')}
+      ${kpi('Deferred requests', (d.circuit.metrics||{}).requests_deferred??0)}
+      ${kpi('Half-open probes', (d.circuit.metrics||{}).half_open_probes??0)}
+      </div></div>`
+    : '';
+  return rl + d.providers.map(p=>`
     <div class="panel"><h3>${esc(p.name)} ${badge(p.status,p.status==='HEALTHY'?'SUCCESS':'WARNING')} <span class="muted">· window ${esc(p.window||'24h')}</span></h3>
     <div class="grid kpis" style="margin-top:6px">
       ${kpi('Retries',p.retries)}${kpi('HTTP 400',p.provider_400)}${kpi('HTTP 429',p.provider_429)}
       ${kpi('HTTP 5xx',p.provider_5xx)}${kpi('Not ready',p.not_ready)}
       ${kpi('Transient',p.transient)}${kpi('Permanent',p.permanent)}
       ${kpi('Add budget avg',p.avg_adds_per_resolve??NA,'',`limit ${p.budget_limit}`)}
-    </div></div>`).join('');
+    </div></div>`).join('') + circuit;
+}
+/* ---------- ingest ---------- */
+const INGEST_STATE = {
+  HEALTHY:['HEALTHY','SUCCESS','Ingest pipeline healthy'],
+  RATE_LIMITED:['RATE_LIMITED','WARNING','Provider rate limited — queue safely paused'],
+  DEGRADED:['DEGRADED','DEGRADED','Provider unavailable for a prolonged period — queue paused, retrying automatically'],
+  IDLE:['IDLE','INFO','Queue empty — nothing wanted right now'],
+  PENDING:['PENDING','RUNNING','Jobs waiting for the worker'],
+};
+function ingestHtml(d){
+  if (!d.enabled) return empty('Ingest bridge disabled','Set INGEST_ENABLED=true to activate the arr → resolver wanted-queue.');
+  const st = INGEST_STATE[d.state] || ['UNKNOWN','INFO',d.human||''];
+  const prov = d.provider||{};
+  const banner = `<div class="banner ${st[1]==='SUCCESS'?'HEALTHY':st[1]==='INFO'?'':st[1]}" aria-live="polite">`
+    + `${badge(st[0], st[1]==='SUCCESS'?'SUCCESS':st[1])}<span class="h">${esc(st[2])}</span>`
+    + (prov.blocked && prov.blocked.length
+        ? `<span class="muted" style="font-weight:400">— ${esc(prov.blocked.join(', '))} rate limited · retry in <b class="num">${fmtIn(prov.retry_in_s||0)}</b> — <b>geen false NO_SOURCE</b>: jobs blijven bewaard en gaan automatisch verder</span>`
+        : '')
+    + `</div>`;
+  const counts = d.counts_by_state||{};
+  const order = ['QUEUED','IDENTITY_VERIFYING','REGISTERING','RESOLVING','PROVIDER_WAIT','READY','DELIVERING','PLEX_REFRESH','COMPLETED','BLOCKED_IDENTITY','BLOCKED_NO_SOURCE','BLOCKED_MAPPING','FAILED_RETRYABLE','FAILED_FINAL'];
+  const m = d.metrics||{};
+  const kpis = kpi('Queue active', d.queue_active??0, d.queue_active?'run':'', 'non-terminal jobs')
+    + kpi('Completed', m.completed??0,'ok', m.last_completed?`last: ${esc(m.last_completed)}`:'')
+    + kpi('Provider waits', m.provider_waits??0, m.provider_waits?'warn':'', 'deferred, not failed')
+    + kpi('Enqueued', m.enqueued??0,'', 'total');
+  const countsRow = `<div class="bar" style="margin:8px 0">${order.filter(s=>counts[s]).map(s=>
+    `<span>${esc(s.replace(/_/g,' '))} <b>${counts[s]}</b></span>`).join('') || '<span>queue empty</span>'}</div>`;
+  const arrCard = side=>{
+    const c = d[side]||{};
+    const ok = c.arr_health_ok;
+    const errs = (c.arr_health||[]).filter(h=>h.type==='error'||h.type==='unreachable');
+    return card(`${side[0].toUpperCase()+side.slice(1)} bridge`,
+      `<div>${badge(c.enabled?(ok!==false?'HEALTHY':'DEGRADED'):'OFF', !c.enabled?'WARNING':(ok!==false?'SUCCESS':'FAILED'))}
+        <span class="muted" style="margin-left:6px">${esc(c.url||'')}</span></div>`
+      + (c.last_rss_sync?`<div class="muted">last RSS sync: ${esc(String(c.last_rss_sync).slice(0,16).replace('T',' '))} UTC</div>`:'')
+      + (errs.length?`<div class="muted" style="color:var(--warning)">${errs.map(e=>esc((e.message||'').slice(0,90))).join(' · ')}</div>`:''),
+      badge(c.enabled?'ON':'OFF', c.enabled?'TV':'neutral'));
+  };
+  const recent = `<div class="panel"><h3>Catch-up policy</h3>
+    <div class="muted">batch size <b class="num">${d.batch_size??1}</b> · reconcile every <b class="num">${Math.round((d.reconcile_interval_s||1200)/60)} min</b>
+    ${d.last_reconcile_at?` · last reconcile ${ago(d.last_reconcile_at)}`:''}</div>
+    <div class="muted" style="margin-top:4px">Provider 429 → queue pause + Retry-After/backoff. True no-match only after a normally completed search with zero usable candidates.</div></div>`;
+  return banner + `<div class="grid kpis">${kpis}</div>${countsRow}
+    <div class="grid cols" style="margin-top:var(--sp-3)">${arrCard('sonarr')}${arrCard('radarr')}</div>${recent}`;
 }
 /* ---------- item detail ---------- */
 async function openItem(id){
@@ -686,9 +765,15 @@ function refresh(sec){
   });
   if(sec==='jobs') apiKeep('/ops/jobs', d=>paintInto('#jobs','jobs', jobsHtml(d)));
   if(sec==='providers') apiKeep('/ops/providers/health', d=>paintInto('#providers','prov', providersHtml(d)));
+  if(sec==='ingest') apiKeep('/ops/ingest/health', d=>{
+    paintInto('#ingest','ingest', ingestHtml(d));
+    const c = d.counts_by_state||{};
+    const active = (c.QUEUED||0)+(c.RESOLVING||0)+(c.PROVIDER_WAIT||0)+(c.DELIVERING||0);
+    $('#nav-ingest').textContent = active || '';
+  });
   if(sec==='library') loadLibrary();
 }
-const cadence = {overview:5000, issues:8000, activity:15000, jobs:5000, providers:30000, library:30000};
+const cadence = {overview:5000, issues:8000, activity:15000, jobs:5000, providers:30000, library:30000, ingest:8000};
 const lastPoll = {};
 function loop(sec){
   const now = Date.now();
@@ -699,6 +784,7 @@ function onShown(sec){
   lastPoll[sec]=0; loop(sec);
   const titles = {overview:['Overview','system health at a glance'],activity:['Activity','event timeline'],
     issues:['Issues','triage queue'],library:['Library','all managed items'],
+    ingest:['Ingest','sonarr/radarr wanted → library pipeline'],
     jobs:['Jobs','background operations'],providers:['Providers','debrid provider health']};
   $('#pagetitle').textContent = titles[sec][0];
   $('#pagesub').textContent = titles[sec][1];
@@ -732,7 +818,7 @@ setInterval(()=>{
   if (document.hidden) return;
   const sec = document.querySelector('section.on').id.replace('s-','');
   loop(sec);
-  if (sec==='overview'){ loop('issues'); loop('jobs'); }
+  if (sec==='overview'){ loop('issues'); loop('jobs'); loop('ingest'); }
   if (sec==='activity') loop('activity');
 }, 2000);
 function applyHash(){

@@ -428,6 +428,20 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
         echt en leest het resultaat terug.
         """
         plex_path = item.plex_path
+        # ingest-hardening: PROVIDER_WAIT is geen no-source — de provider kon
+        # niet antwoorden. Nooit de per-item backoff opvoeren terwijl het
+        # circuit open staat; opnieuw proberen gebeurt zodra de provider
+        # beschikbaar is (probe via gewone resolve).
+        circuit = getattr(self.resolver, "circuit", None)
+        blocked = circuit.blocked() if circuit is not None else []
+        if item.status == "PROVIDER_WAIT" or blocked:
+            retry_in = 0.0
+            snap = circuit.snapshot().get("scrapers", {}) if circuit is not None else {}
+            for name in blocked:
+                retry_in = max(retry_in, snap.get(name, {}).get("retry_in_s", 0))
+            return {"skipped": "provider_wait",
+                    "blocked_scrapers": blocked,
+                    "next_retry_s": round(retry_in, 0)}
         if not self.no_source_retry.should_retry(plex_path):
             return {"skipped": "backoff",
                     "next_retry_s": round(

@@ -22,6 +22,8 @@ from plex_scraper.scraper.providers.base import DebridProvider, NotReadyError, P
 from plex_scraper.scraper.providers.torbox import VIDEO_EXTS
 from plex_scraper.common.scoring.release_parser import parse_release
 from plex_scraper.scraper.scrapers.base import Scraper, TorrentCandidate
+from plex_scraper.scraper.provider_circuit import ProviderCircuit
+from plex_scraper.scraper.provider_errors import ProviderSearchError
 from plex_scraper.resolver.selfheal import identity_gate
 from plex_scraper.resolver import media as m_prof
 from plex_scraper.resolver.jit import JitConfig, JitController
@@ -53,13 +55,15 @@ class UnresolvedError(Exception):
 
 class Resolver:
     def __init__(self, settings: Settings, store: Store, provider: DebridProvider,
-                 scrapers: list[Scraper], scorer, caches: CacheSet):
+                 scrapers: list[Scraper], scorer, caches: CacheSet,
+                 circuit: ProviderCircuit | None = None):
         self.s = settings
         self.store = store
         self.provider = provider
         self.scrapers = scrapers
         self.scorer = scorer
         self.caches = caches
+        self.circuit = circuit or ProviderCircuit()
         self.sessions: dict[str, SessionContext] = {}
         self._resolve_locks: dict[str, asyncio.Lock] = {}
         self._sem = asyncio.Semaphore(settings.upstream_concurrency)
@@ -67,6 +71,7 @@ class Resolver:
             "resolutions": 0, "fallbacks": 0, "generation_switches": 0,
             "reads": 0, "read_bytes": 0, "resolve_latency_sum": 0.0,
             "request_latency_sum": 0.0, "request_count": 0,
+            "resolutions_deferred_provider": 0,
             # adaptive read-ahead (FASE 8/12/20)
             "prefetch_bytes": 0, "prefetch_cancelled_bytes": 0,
             "prefetch_hits": 0, "prefetch_errors": 0,
@@ -196,7 +201,25 @@ class Resolver:
                             conflicting_fields=conflict.get("conflicting_fields"))
             self.metrics["resolve_latency_sum"] += time.monotonic() - started
             return None
-        candidates = await self._gather_candidates(item)
+        # Ingest-hardening: een provider-zoekactie die niet normaal kon
+        # afronden (429/5xx/timeout/circuit open) is NOOIT een no-match —
+        # item gaat naar PROVIDER_WAIT in plaats van NO_SOURCE.
+        try:
+            candidates = await self._gather_candidates(item)
+        except ProviderSearchError as exc:
+            self.metrics["resolutions_deferred_provider"] += 1
+            self.metrics["resolve_latency_sum"] += time.monotonic() - started
+            item.status = m.ItemStatus.PROVIDER_WAIT.value
+            await self.store.update_runtime(item)
+            snap = self.circuit.snapshot().get("scrapers", {}).get(
+                exc.scraper, {})
+            await self._evt("resolution_deferred_provider", item=item,
+                            reason=reason, scraper=exc.scraper,
+                            error_kind=exc.kind,
+                            retry_after_s=exc.retry_after_s,
+                            provider_retry_in_s=snap.get("retry_in_s"),
+                            provider_state=snap.get("state"))
+            return None
         ranked = await self._rank_candidates(item, candidates)
         item.status = m.ItemStatus.CANDIDATE_VALIDATION.value
         await self.store.update_runtime(item)
@@ -370,14 +393,32 @@ class Resolver:
         return cached + uncached
 
     async def _gather_candidates(self, item: m.MediaItem) -> list[TorrentCandidate]:
+        """Candidates van alle scrapers. Harde semantiek (ingest-hardening):
+
+        * een ProviderSearchError (429/5xx/timeout/circuit-defer) wordt NIET
+          doorgeslikt en LEGT GEEN lege negatieve cache — de vorige geldige
+          candidate-cache blijft gewoon staan;
+        * alleen een 200-antwoord met nul bruikbare streams (of een echte
+          scraper-bug) levert een echte lege lijst op;
+        * zijn er candidates van andere scrapers gevonden terwijl één scraper
+          faalde, dan gaan die gewoon door (partial result wint).
+        """
         key = f"{item.kind}:{item.imdb_id}:{item.season}:{item.episode}"
         cached = self.caches.candidates.get(key)
-        if cached is not None:
+        if cached:
             return cached
         results: list[TorrentCandidate] = []
+        provider_error: ProviderSearchError | None = None
         for scraper in self.scrapers:
             try:
                 results.extend(await scraper.search(item.search_key()))
+            except ProviderSearchError as exc:
+                # provider kon niet antwoorden — NOOIT cachen, NOOIT swallow
+                provider_error = exc
+                await self._evt("provider_search_failed", item=item,
+                                scraper=exc.scraper, error_kind=exc.kind,
+                                retry_after_s=exc.retry_after_s,
+                                error=repr(exc)[:160])
             except Exception as exc:                    # scraper failure is not fatal
                 await self._evt("scraper_error", item=item, scraper=scraper.name, error=repr(exc))
         # dedupe on (hash, filename-hint) — same hash often appears with indexes
@@ -388,8 +429,13 @@ class Resolver:
             if k not in seen:
                 seen.add(k)
                 unique.append(cand)
-        self.caches.candidates.put(key, unique)
-        return unique
+        if unique:
+            # alleen SUCCESVOLLE zoekresultaten worden gecachet
+            self.caches.candidates.put(key, unique)
+            return unique
+        if provider_error is not None:
+            raise provider_error
+        return []
 
     async def _rank_candidates(self, item: m.MediaItem,
                                candidates: list[TorrentCandidate]) -> list[tuple[TorrentCandidate, float]]:

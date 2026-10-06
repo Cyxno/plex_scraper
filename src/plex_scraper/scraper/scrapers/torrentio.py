@@ -15,6 +15,11 @@ import re
 
 import httpx
 
+from ..provider_errors import (
+    ProviderBackendUnavailable,
+    ProviderRateLimited,
+    parse_retry_after,
+)
 from .base import Scraper, TorrentCandidate
 
 _SEEDERS = re.compile(r"👤\s*(\d+)")
@@ -50,10 +55,34 @@ class TorrentioScraper(Scraper):
             delay = self._last_request + 1.1 - asyncio.get_event_loop().time()
             if delay > 0:
                 await asyncio.sleep(delay)
-            resp = await self._client.get(url)
+            try:
+                resp = await self._client.get(url)
+            except httpx.TimeoutException as exc:
+                # transient — NOOIT een no-match (ingest-hardening Phase 2)
+                raise ProviderBackendUnavailable(
+                    self.name, f"timeout: {exc!r}"[:160]) from exc
+            except httpx.TransportError as exc:
+                raise ProviderBackendUnavailable(
+                    self.name, f"transport error: {exc!r}"[:160]) from exc
             self._last_request = asyncio.get_event_loop().time()
-        resp.raise_for_status()
-        payload = resp.json()
+        if resp.status_code == 429:
+            # 429 = provider capacity, niet "geen bron". Retry-After eerlijk
+            # tonen (seconden óf HTTP-date).
+            retry_after = parse_retry_after(resp.headers.get("Retry-After"))
+            raise ProviderRateLimited(
+                self.name, "429 too many requests", retry_after_s=retry_after)
+        if resp.status_code >= 500:
+            raise ProviderBackendUnavailable(
+                self.name, f"HTTP {resp.status_code} from torrentio")
+        try:
+            resp.raise_for_status()
+            payload = resp.json()
+        except httpx.HTTPStatusError as exc:
+            raise ProviderBackendUnavailable(
+                self.name, f"HTTP {exc.response.status_code}") from exc
+        except ValueError as exc:                    # json decode / foutpagina
+            raise ProviderBackendUnavailable(
+                self.name, f"unparsable response: {exc!r}"[:160]) from exc
 
         out: list[TorrentCandidate] = []
         for stream in payload.get("streams") or []:

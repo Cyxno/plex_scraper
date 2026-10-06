@@ -30,6 +30,7 @@ def build_resolver(settings: Settings):
     from .scraper.providers.demo_seed import seeded_provider, seeded_scrapers
     from .scraper.providers.torbox import TorboxProvider
     from .scraper.scrapers.torrentio import TorrentioScraper
+    from .scraper.provider_circuit import CircuitBreakerScraper, ProviderCircuit
 
     os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
     store = Store(settings.db_path)
@@ -39,16 +40,19 @@ def build_resolver(settings: Settings):
         checkcached_ttl=settings.cache_checkcached_ttl,
         link_ttl=settings.cache_link_ttl,
     )
+    circuit = ProviderCircuit()
     if settings.torbox_api_token:
         provider = TorboxProvider(settings)
-        scrapers = [TorrentioScraper(settings.scraper_torrentio_base)]
+        scrapers = [CircuitBreakerScraper(
+            TorrentioScraper(settings.scraper_torrentio_base), circuit)]
     else:
         # PoC/demo convenience: no token -> seeded mocks (synthetic bytes)
         logging.getLogger("resolver").warning(
             "TORBOX_API_TOKEN not set - using seeded mock provider/scraper")
         provider = seeded_provider()
-        scrapers = seeded_scrapers()
-    return Resolver(settings, store, provider, scrapers, scorer, caches)
+        scrapers = [CircuitBreakerScraper(s, circuit) for s in seeded_scrapers()]
+    return Resolver(settings, store, provider, scrapers, scorer, caches,
+                    circuit=circuit)
 
 
 def _preferences_path(settings: Settings) -> str:

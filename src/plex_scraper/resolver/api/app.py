@@ -95,6 +95,20 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         resolver._sweeper = sweeper
         app.state.sweeper = sweeper
 
+    # ingest-bridge (arr wanted → resolver → canonical → plex; persistent)
+    if getattr(settings, "ingest_enabled", False):
+        from plex_scraper.ingest.bridge import IngestBridge
+        bridge = IngestBridge(resolver, settings)
+        app.state.ingest = bridge
+
+        @app.on_event("startup")
+        async def _start_ingest():
+            bridge.start()
+
+        @app.on_event("shutdown")
+        async def _stop_ingest():
+            bridge.stop()
+
     @app.exception_handler(KeyError)
     async def _not_found(_req: Request, exc: KeyError):
         return JSONResponse(status_code=404, content={"error": str(exc)})
@@ -407,6 +421,89 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         if not await resolver.fail_current(item_id):
             raise KeyError(f"no active source for {item_id}")
         return {"failed_current_source_of": item_id}
+
+    # ------------------------------------------------------------- ingest
+    @app.get("/api/ingest/status")
+    async def ingest_status():
+        bridge = getattr(app.state, "ingest", None)
+        if bridge is None:
+            return {"enabled": False,
+                    "reason": "INGEST_ENABLED niet aan — bridge niet actief"}
+        return await bridge.status()
+
+    @app.get("/api/ingest/jobs")
+    async def ingest_jobs(status: str | None = None, limit: int = 200):
+        bridge = getattr(app.state, "ingest", None)
+        if bridge is None:
+            return {"jobs": []}
+        jobs = await resolver.store.list_jobs(status=status, limit=min(limit, 1000))
+        from plex_scraper.ingest.models import TERMINAL_STATES
+        return {"jobs": [{
+            "id": j.id, "source": j.source, "kind": j.kind,
+            "arr_item_id": j.arr_item_id, "dedupe_key": j.dedupe_key,
+            "title": j.title, "series": j.series,
+            "season": j.season, "episode": j.episode, "year": j.year,
+            "air_date_utc": j.air_date_utc,
+            "status": j.status, "attempts": j.attempts,
+            "next_attempt_in_s": round(max(j.next_attempt_at - time.time(), 0), 0),
+            "provider_block": j.provider_block, "last_error": j.last_error,
+            "resolver_item_id": j.resolver_item_id,
+            "delivered_symlink": j.delivered_symlink,
+            "enqueue_reason": j.enqueue_reason,
+            "terminal": j.status in TERMINAL_STATES,
+        } for j in jobs]}
+
+    @app.post("/api/ingest/reconcile-now")
+    async def ingest_reconcile_now():
+        bridge = getattr(app.state, "ingest", None)
+        if bridge is None:
+            return JSONResponse(status_code=409,
+                                content={"error": "ingest bridge niet actief"})
+        return await bridge.reconcile()
+
+    @app.post("/api/ingest/jobs/{job_id}/retry")
+    async def ingest_retry_job(job_id: str):
+        from plex_scraper.ingest.models import JobState
+        bridge = getattr(app.state, "ingest", None)
+        if bridge is None:
+            return JSONResponse(status_code=409,
+                                content={"error": "ingest bridge niet actief"})
+        job = await resolver.store.get_job(job_id)
+        if job is None:
+            raise KeyError(f"unknown ingest job {job_id}")
+        if job.resolver_item_id:
+            item = await resolver.store.get_item(job.resolver_item_id)
+            if item is not None:
+                resolver.caches.candidates.invalidate(
+                    f"{item.kind}:{item.imdb_id}:{item.season}:{item.episode}")
+        job.next_attempt_at = time.time()
+        await bridge._set_state(job, JobState.QUEUED, error=None, retry_in=0.0)
+        return {"requeued": job.id}
+
+    def _webhook_ok(source: str, token: str) -> JSONResponse | None:
+        bridge = getattr(app.state, "ingest", None)
+        if bridge is None:
+            return JSONResponse(status_code=409,
+                                content={"error": "ingest bridge niet actief"})
+        expected = getattr(settings, "ingest_webhook_token", "")
+        if expected and token != expected:
+            return JSONResponse(status_code=401,
+                                content={"error": "bad webhook token"})
+        return None
+
+    @app.post("/api/ingest/webhook/sonarr")
+    async def webhook_sonarr(request: Request, token: str = ""):
+        if (resp := _webhook_ok("sonarr", token)) is not None:
+            return resp
+        payload = await request.json()
+        return await app.state.ingest.handle_webhook("sonarr", payload)
+
+    @app.post("/api/ingest/webhook/radarr")
+    async def webhook_radarr(request: Request, token: str = ""):
+        if (resp := _webhook_ok("radarr", token)) is not None:
+            return resp
+        payload = await request.json()
+        return await app.state.ingest.handle_webhook("radarr", payload)
 
     # operationele cockpit view-models (DEEL R)
     from .ops import create_ops_routes

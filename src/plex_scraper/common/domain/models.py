@@ -30,6 +30,9 @@ class ItemStatus(str, Enum):
     CANDIDATE_VALIDATION = "CANDIDATE_VALIDATION"
     READY = "READY"
     SOURCE_FAILED = "SOURCE_FAILED"
+    # provider onbeschikbaar (429/5xx/circuit open): zoeken kon normaal niet
+    # afronden — semantisch NIET gelijk aan NO_SOURCE (ingest-hardening)
+    PROVIDER_WAIT = "PROVIDER_WAIT"
 
 
 class SourceState(str, Enum):

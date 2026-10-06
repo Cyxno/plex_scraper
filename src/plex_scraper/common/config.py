@@ -120,6 +120,33 @@ class Settings:
     tautulli_url: str = ""
     tautulli_apikey: str = ""
 
+    # ------------------------------------------------------------- ingest
+    # persistente arr→resolver wanted-bridge (ingest-hardening 2026-10-06)
+    ingest_enabled: bool = False
+    ingest_reconcile_interval_s: float = 1200.0        # 20 min (15-30 min venster)
+    ingest_worker_interval_s: float = 20.0
+    ingest_batch_size: int = 1                         # catch-up: bewust klein houden
+    ingest_job_backoff_base_s: float = 300.0           # 5m → 10m → 20m → ... cap
+    ingest_job_backoff_max_s: float = 86400.0
+    ingest_job_max_attempts: int = 8
+    ingest_delivery_probe_retries: int = 3
+    ingest_delivery_probe_wait_s: float = 20.0
+    sonarr_enabled: bool = False
+    sonarr_url: str = "http://192.168.1.2:7854"
+    sonarr_api_key: str = ""
+    radarr_enabled: bool = False
+    radarr_url: str = "http://192.168.1.2:7878"
+    radarr_api_key: str = ""
+    ingest_webhook_token: str = ""                     # optioneel shared secret
+    plex_container: str = "plex"
+    plex_section_tv: int = 2
+    plex_section_movies: int = 1
+    symlink_root: str = "/mnt/vm_storage/symlinks"
+    canonical_root: str = "/mnt/remote/nzbdav"
+    sonarr_root_map: str = "/media=TV Shows"           # arrroot=subtree
+    radarr_root_map: str = "/media-movies=Movies"
+    arr_reconcile_enabled: bool = True
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
@@ -227,4 +254,45 @@ class Settings:
                 "MAX_PROVIDER_ADDS_PER_RESOLVE", cls.max_provider_adds_per_resolve),
             min_media_movie_mb=_int("MIN_MEDIA_MOVIE_MB", cls.min_media_movie_mb),
             min_media_episode_mb=_int("MIN_MEDIA_EPISODE_MB", cls.min_media_episode_mb),
+            ingest_enabled=_bool("INGEST_ENABLED", False),
+            ingest_reconcile_interval_s=float(
+                os.environ.get("INGEST_RECONCILE_INTERVAL_S",
+                               cls.ingest_reconcile_interval_s)),
+            ingest_worker_interval_s=float(
+                os.environ.get("INGEST_WORKER_INTERVAL_S",
+                               cls.ingest_worker_interval_s)),
+            ingest_batch_size=_int("INGEST_BATCH_SIZE", cls.ingest_batch_size),
+            ingest_job_backoff_base_s=float(
+                os.environ.get("INGEST_JOB_BACKOFF_BASE_S",
+                               cls.ingest_job_backoff_base_s)),
+            ingest_job_backoff_max_s=float(
+                os.environ.get("INGEST_JOB_BACKOFF_MAX_S",
+                               cls.ingest_job_backoff_max_s)),
+            ingest_job_max_attempts=_int(
+                "INGEST_JOB_MAX_ATTEMPTS", cls.ingest_job_max_attempts),
+            ingest_delivery_probe_retries=_int(
+                "INGEST_DELIVERY_PROBE_RETRIES", cls.ingest_delivery_probe_retries),
+            ingest_delivery_probe_wait_s=float(
+                os.environ.get("INGEST_DELIVERY_PROBE_WAIT_S",
+                               cls.ingest_delivery_probe_wait_s)),
+            sonarr_enabled=_bool("SONARR_ENABLED", False),
+            sonarr_url=os.environ.get("SONARR_URL", cls.sonarr_url),
+            sonarr_api_key=(
+                os.environ.get("SONARR_API_KEY", "").strip()
+                or _read_secret_file(os.environ.get("SONARR_API_KEY_FILE", ""))),
+            radarr_enabled=_bool("RADARR_ENABLED", False),
+            radarr_url=os.environ.get("RADARR_URL", cls.radarr_url),
+            radarr_api_key=(
+                os.environ.get("RADARR_API_KEY", "").strip()
+                or _read_secret_file(os.environ.get("RADARR_API_KEY_FILE", ""))),
+            ingest_webhook_token=os.environ.get("INGEST_WEBHOOK_TOKEN", "").strip(),
+            plex_container=os.environ.get("PLEX_CONTAINER", cls.plex_container),
+            plex_section_tv=_int("PLEX_SECTION_TV", cls.plex_section_tv),
+            plex_section_movies=_int("PLEX_SECTION_MOVIES", cls.plex_section_movies),
+            symlink_root=os.environ.get("SYMLINK_ROOT", cls.symlink_root),
+            canonical_root=os.environ.get("CANONICAL_ROOT", cls.canonical_root),
+            sonarr_root_map=os.environ.get("SONARR_ROOT_MAP", cls.sonarr_root_map),
+            radarr_root_map=os.environ.get("RADARR_ROOT_MAP", cls.radarr_root_map),
+            arr_reconcile_enabled=_bool(
+                "ARR_RECONCILE_ENABLED", cls.arr_reconcile_enabled),
         )

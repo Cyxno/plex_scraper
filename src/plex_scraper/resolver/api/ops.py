@@ -219,12 +219,32 @@ def create_ops_routes(app, resolver) -> APIRouter:
             coverage = None
         if coverage and coverage.get("legacy_dead", 0) > 0:
             health = "DEGRADED"
+        elif coverage and coverage.get("legacy_working", 0) > 0 \
+                and health in ("HEALTHY", "ATTENTION") and not no_source:
+            # Phase 40: ingest/runtime gezond, alleen werkend legacy-residu
+            health = "HEALTHY_WITH_LEGACY_GAPS"
+        # Phase 36-42: ingest als first-class block + health-semantiek
+        ingest_block = None
+        bridge = getattr(app.state, "ingest", None)
+        if bridge is not None:
+            try:
+                ingest_block = await bridge.status()
+            except Exception:                       # noqa: BLE001
+                ingest_block = None
+            if ingest_block:
+                provider = ingest_block.get("provider") or {}
+                if provider.get("blocked") and \
+                        (provider.get("retry_in_s") or 0) > 3600:
+                    health = "DEGRADED"
+                elif provider.get("blocked") and health == "HEALTHY":
+                    health = "ATTENTION"            # gewone, begrensde pauze
         jobs = await store.job_runs(limit=3)
         running = [j for j in jobs if j["status"] == "RUNNING"]
 
         return {
             "health": health,
             "coverage": coverage,
+            "ingest": ingest_block,
             "physical": {"status": ph.get("status"),
                          "checked_at": ph.get("checked_at"),
                          "latency_s": ph.get("latency_s"),
@@ -234,6 +254,7 @@ def create_ops_routes(app, resolver) -> APIRouter:
             "library": {"total": len(items), "ready": counts.get("READY", 0),
                         "no_source": len(no_source),
                         "resolving": len(resolving),
+                        "provider_wait": counts.get("PROVIDER_WAIT", 0),
                         "identity_incomplete": identity_incomplete},
             "playback": {"active": len(streams), "streams": streams},
             "now": {"resolving": [{"item_id": i.id, "label":
@@ -568,6 +589,9 @@ def create_ops_routes(app, resolver) -> APIRouter:
     # ------------------------------------------------------------ providers
     async def _providers_data():
         evs = await _events_since(_since(24), limit=2000)
+        # scraper-circuit (ingest-hardening): 429/5xx-semantiek + cooldowns
+        circuit = getattr(resolver, "circuit", None)
+        c_snap = circuit.snapshot() if circuit is not None else {"scrapers": {}}
         stats = {"torbox": {"name": "torbox", "status": "HEALTHY",
                             "retries": 0, "provider_400": 0, "provider_429": 0,
                             "provider_5xx": 0, "not_ready": 0,
@@ -578,6 +602,15 @@ def create_ops_routes(app, resolver) -> APIRouter:
         for e in evs:
             if e["kind"] in ("torbox_retry", "torbox_createtorrent_retry"):
                 stats["torbox"]["retries"] += 1
+            elif e["kind"] == "provider_search_failed":
+                s = stats["torbox"]
+                s["retries"] += 1
+                if e.get("error_kind") == "PROVIDER_RATE_LIMITED":
+                    s["provider_429"] += 1
+                else:
+                    s["provider_5xx"] += 1
+            elif e["kind"] == "resolution_deferred_provider":
+                stats["torbox"]["transient"] += 1
             elif e["kind"] == "candidate_failed":
                 s = stats["torbox"]
                 s["candidate_failures"] += 1
@@ -602,11 +635,81 @@ def create_ops_routes(app, resolver) -> APIRouter:
         s["budget_limit"] = getattr(resolver.s, "max_provider_adds_per_resolve", 3)
         if s["provider_5xx"] > 5 or s["retries"] > 20:
             s["status"] = "DEGRADED"
-        return {"providers": list(stats.values())}
+        out = {"providers": list(stats.values()),
+               "circuit": c_snap}
+        # Phase 39-semantiek: rate-limit zichtbaar als DEGRADED, nooit "no source"
+        for name, sc in (c_snap.get("scrapers") or {}).items():
+            if sc.get("state") not in ("HEALTHY", None) and sc.get("retry_in_s", 0) > 0:
+                out["rate_limit"] = {
+                    "state": sc["state"], "scraper": name,
+                    "retry_in_s": sc["retry_in_s"],
+                    "retry_source": sc.get("retry_source"),
+                    "human": (f"Provider rate limited ({name}) — "
+                              f"pauze {int(sc['retry_in_s'] // 60)} min "
+                              f"({sc.get('retry_source') or 'backoff'})"),
+                }
+                break
+        return out
 
     @router.get("/providers/health")
     async def providers_health():
         return await _guarded("providers", _providers_data)
+
+    # --------------------------------------------------------------- ingest
+    @router.get("/ingest/health")
+    async def ingest_health():
+        """Phase 36-39: ingest als first-class status (arr-bridge, queue,
+        provider-state, arr-indexerhealth via de bridge-clients)."""
+        bridge = getattr(app.state, "ingest", None)
+        out: dict = {"enabled": bridge is not None}
+        if bridge is None:
+            out["human"] = "Ingest-bridge niet actief (INGEST_ENABLED uit)"
+            return out
+        st = await bridge.status()
+        out.update(st)
+        # arr-zijde: health + RSS-cadans (best effort, nooit blocking)
+        for key, client in (("sonarr", bridge.sonarr),
+                            ("radarr", bridge.radarr)):
+            if client is None:
+                out[key]["health"] = "UNCONFIGURED"
+                continue
+            try:
+                health = await client.health()
+                tasks = await client.tasks()
+                rss = next((t for t in tasks
+                            if "RssSync" in (t.get("taskName") or "")), None)
+                out[key]["arr_health"] = health
+                out[key]["arr_health_ok"] = all(
+                    h.get("type") != "error" for h in health)
+                out[key]["last_rss_sync"] = (rss or {}).get("lastExecution")
+            except Exception as exc:                    # noqa: BLE001
+                out[key]["arr_health"] = [{"type": "unreachable",
+                                           "message": repr(exc)[:120]}]
+                out[key]["arr_health_ok"] = False
+                out[key]["last_rss_sync"] = None
+        counts = st.get("counts_by_state") or {}
+        active = sum(counts.get(k, 0) for k in
+                     ("QUEUED", "IDENTITY_VERIFYING", "REGISTERING", "RESOLVING",
+                      "PROVIDER_WAIT", "READY", "DELIVERING", "PLEX_REFRESH",
+                      "FAILED_RETRYABLE"))
+        out["queue_active"] = active
+        if st["provider"]["blocked"]:
+            if (st["provider"].get("retry_in_s") or 0) > 3600:
+                out["state"] = "DEGRADED"
+                out["human"] = ("Provider rate limited voor langere tijd — "
+                                "queue staat veilig gepauzeerd")
+            else:
+                out["state"] = "RATE_LIMITED"
+                out["human"] = (f"Provider rate limited — retry in "
+                                f"{int((st['provider'].get('retry_in_s') or 0) / 60)} min")
+        elif st["metrics"].get("last_completed_at"):
+            out["state"] = "HEALTHY"
+            out["human"] = "Ingest actief en levert"
+        else:
+            out["state"] = "IDLE" if active == 0 else "PENDING"
+            out["human"] = ("geen actieve jobs" if active == 0
+                            else f"{active} job(s) wachten op verwerking")
+        return out
 
 
     # ------------------------------------------------- operator actions (J)

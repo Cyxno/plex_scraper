@@ -471,3 +471,166 @@ class Store:
                      **json.loads(r["detail_json"])}
                     for r in c.execute("SELECT * FROM identity_conflicts")]
         return await self.run(fn)
+
+    # ---------------------------------------------------------- ingest queue
+    @staticmethod
+    def _ingest_schema(c: sqlite3.Connection) -> None:
+        c.execute("""CREATE TABLE IF NOT EXISTS ingest_jobs (
+          id TEXT PRIMARY KEY,
+          source TEXT NOT NULL,
+          arr_item_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          dedupe_key TEXT NOT NULL UNIQUE,
+          title TEXT NOT NULL DEFAULT '',
+          series TEXT, season INTEGER, episode INTEGER, year INTEGER,
+          show_imdb_id TEXT, show_tvdb_id TEXT, show_tmdb_id TEXT,
+          imdb_id TEXT, tmdb_id TEXT,
+          monitored INTEGER NOT NULL DEFAULT 1,
+          wanted INTEGER NOT NULL DEFAULT 1,
+          arr_path TEXT, air_date_utc TEXT,
+          enqueue_reason TEXT NOT NULL DEFAULT 'reconcile',
+          status TEXT NOT NULL DEFAULT 'QUEUED',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          next_attempt_at REAL NOT NULL DEFAULT 0,
+          provider_block TEXT, last_error TEXT,
+          resolver_item_id TEXT, delivered_symlink TEXT,
+          created_at REAL NOT NULL, updated_at REAL NOT NULL,
+          completed_at REAL
+        )""")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_ingest_status "
+                  "ON ingest_jobs(status)")
+
+    @staticmethod
+    def _row_to_job(r: sqlite3.Row):
+        from plex_scraper.ingest.models import IngestJob
+        return IngestJob(
+            source=r["source"], arr_item_id=r["arr_item_id"], kind=r["kind"],
+            dedupe_key=r["dedupe_key"], title=r["title"], series=r["series"],
+            season=r["season"], episode=r["episode"], year=r["year"],
+            show_imdb_id=r["show_imdb_id"], show_tvdb_id=r["show_tvdb_id"],
+            show_tmdb_id=r["show_tmdb_id"], imdb_id=r["imdb_id"],
+            tmdb_id=r["tmdb_id"], monitored=bool(r["monitored"]),
+            wanted=bool(r["wanted"]), arr_path=r["arr_path"],
+            air_date_utc=r["air_date_utc"], enqueue_reason=r["enqueue_reason"],
+            status=r["status"], attempts=r["attempts"],
+            next_attempt_at=r["next_attempt_at"], provider_block=r["provider_block"],
+            last_error=r["last_error"], resolver_item_id=r["resolver_item_id"],
+            delivered_symlink=r["delivered_symlink"], id=r["id"],
+            created_at=r["created_at"], updated_at=r["updated_at"],
+            completed_at=r["completed_at"])
+
+    _JOB_COLS = ("source", "arr_item_id", "kind", "dedupe_key", "title", "series",
+                 "season", "episode", "year", "show_imdb_id", "show_tvdb_id",
+                 "show_tmdb_id", "imdb_id", "tmdb_id", "monitored", "wanted",
+                 "arr_path", "air_date_utc", "enqueue_reason", "status",
+                 "attempts", "next_attempt_at", "provider_block", "last_error",
+                 "resolver_item_id", "delivered_symlink", "updated_at",
+                 "completed_at")
+
+    async def upsert_job(self, job) -> tuple[str, bool]:
+        """INSERT OR IGNORE op dedupe_key: webhook + reconcile + retry landen
+        op dezelfde rij (Phase 14). Bestaande rij krijgt alleen monitored/
+        wanted/arr_path/air_date ververst; returns (id, created)."""
+        def fn(c: sqlite3.Connection):
+            self._ingest_schema(c)
+            existing = c.execute(
+                "SELECT id FROM ingest_jobs WHERE dedupe_key=?",
+                (job.dedupe_key,)).fetchone()
+            if existing is None:
+                c.execute(
+                    f"INSERT INTO ingest_jobs ({', '.join(self._JOB_COLS)}, id, created_at) "
+                    f"VALUES ({', '.join('?' for _ in self._JOB_COLS)}, ?, ?)",
+                    (*[getattr(job, col) if col != "monitored" and col != "wanted"
+                       else int(getattr(job, col)) for col in self._JOB_COLS],
+                     job.id, job.created_at))
+                return job.id, True
+            job.id = existing["id"]
+            c.execute(
+                "UPDATE ingest_jobs SET monitored=?, wanted=?, arr_path=?, "
+                "arr_item_id=?, air_date_utc=?, title=?, updated_at=? "
+                "WHERE id=?",
+                (int(job.monitored), int(job.wanted), job.arr_path,
+                 job.arr_item_id, job.air_date_utc, job.title, m.now(), job.id))
+            return job.id, False
+        return await self.run(fn)
+
+    async def get_job(self, job_id: str):
+        def fn(c: sqlite3.Connection):
+            self._ingest_schema(c)
+            row = c.execute("SELECT * FROM ingest_jobs WHERE id=?",
+                            (job_id,)).fetchone()
+            return self._row_to_job(row) if row else None
+        return await self.run(fn)
+
+    async def get_job_by_dedupe(self, dedupe_key: str):
+        def fn(c: sqlite3.Connection):
+            self._ingest_schema(c)
+            row = c.execute("SELECT * FROM ingest_jobs WHERE dedupe_key=?",
+                            (dedupe_key,)).fetchone()
+            return self._row_to_job(row) if row else None
+        return await self.run(fn)
+
+    async def update_job(self, job, fields: set[str]) -> None:
+        cols = tuple(f for f in fields if f in self._JOB_COLS or f == "completed_at")
+        job.updated_at = m.now()
+        vals = [int(getattr(job, col)) if col in ("monitored", "wanted")
+                else getattr(job, col) for col in cols]
+
+        def fn(c: sqlite3.Connection):
+            c.execute(
+                f"UPDATE ingest_jobs SET {', '.join(f'{col_}=?' for col_ in cols)} "
+                "WHERE id=?", (*vals, job.id))
+        await self.run(fn)
+
+    async def list_jobs(self, status: str | None = None,
+                        limit: int = 500) -> list:
+        def fn(c: sqlite3.Connection):
+            self._ingest_schema(c)
+            if status:
+                rows = c.execute(
+                    "SELECT * FROM ingest_jobs WHERE status=? "
+                    "ORDER BY created_at LIMIT ?", (status, limit)).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT * FROM ingest_jobs ORDER BY created_at LIMIT ?",
+                    (limit,)).fetchall()
+            return [self._row_to_job(r) for r in rows]
+        return await self.run(fn)
+
+    async def due_jobs(self, now_ts: float, limit: int = 5) -> list:
+        """Worker-invoer: actieve jobs waarvan next_attempt_at verstreken is,
+        oudste-next eerst; PROVIDER_WAIT expliciet meegenomen (het circuit
+        bepaalt of er écht gezocht wordt)."""
+        def fn(c: sqlite3.Connection):
+            self._ingest_schema(c)
+            rows = c.execute(
+                "SELECT * FROM ingest_jobs WHERE status IN "
+                "('QUEUED','IDENTITY_VERIFYING','REGISTERING','RESOLVING',"
+                "'PROVIDER_WAIT','READY','DELIVERING','PLEX_REFRESH',"
+                "'FAILED_RETRYABLE') "
+                "AND next_attempt_at <= ? "
+                "ORDER BY next_attempt_at ASC LIMIT ?",
+                (now_ts, limit)).fetchall()
+            return [self._row_to_job(r) for r in rows]
+        return await self.run(fn)
+
+    async def ingest_job_counts(self) -> dict:
+        def fn(c: sqlite3.Connection):
+            self._ingest_schema(c)
+            return {r["status"]: r["n"] for r in c.execute(
+                "SELECT status, COUNT(*) n FROM ingest_jobs GROUP BY status")}
+        return await self.run(fn)
+
+    async def reset_stale_running_jobs(self) -> int:
+        """Herstart-veiligheid: een startend worker-proces heeft geen draaiende
+        jobs — RESOLVING/DELIVERING/... na crash naar FAILED_RETRYABLE."""
+        def fn(c: sqlite3.Connection):
+            self._ingest_schema(c)
+            cur = c.execute(
+                "UPDATE ingest_jobs SET status='FAILED_RETRYABLE', "
+                "last_error='restart recovery', next_attempt_at=? "
+                "WHERE status IN ('IDENTITY_VERIFYING','REGISTERING','RESOLVING',"
+                "'DELIVERING','PLEX_REFRESH')",
+                (m.now() + 30.0,))
+            return cur.rowcount
+        return await self.run(fn)
