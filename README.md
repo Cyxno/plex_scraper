@@ -1,115 +1,104 @@
-# plex_scraper — Plex-first dynamic media resolver (PoC)
+# plex_scraper
 
-**Logical media identity is permanent. The backing torrent is disposable.**
+**Plex-first dynamic media resolver with stable library paths and disposable backing sources.**
 
-Traditional Plex/debrid stacks tie a Plex library item to one backing source
-for too long: when that torrent dies, the item breaks and the whole
-remove/re-add/repair dance starts. This PoC proves the opposite model:
+`plex_scraper` keeps the logical media identity and Plex-visible path stable while the backing source can be replaced when it degrades or disappears.
 
-```
+> Current release line: **1.0.x**
+
+## What it does
+
+```text
 Sonarr / Radarr
       ↓
-logical media item  (permanent: /media/TV/MobLand/Season 02/MobLand - S02E01.mkv)
+logical media identity
       ↓
-resolver  (scrape → score → validate → pin)
+resolver  → scrape → rank → validate → pin / fail over
       ↓
-ranked current sources  (disposable, generation-numbered)
+canonical .ids source
       ↓
-stable VFS mount
+stable symlink + VFS namespace
       ↓
-Plex  (sees the same path forever)
+Plex
 ```
 
-When a source dies:
+Key capabilities:
 
-```
-source A dead → resolver scrapes & validates source B → same Plex item keeps playing
-```
+- TorBox-backed source resolution with Torrentio discovery.
+- Quality-preserving JIT failover and playback rescue.
+- Multi-file torrent-safe probing: provider file selection is independent from scraper file indexes.
+- Stable VFS paths with POSIX read/seek semantics.
+- Arr-authoritative ingest queue with persistent SQLite/WAL state.
+- Provider-aware backoff/circuit handling; 429/5xx never become false `NO_SOURCE`.
+- Physical Plex-namespace health checks and self-healing.
+- Operator cockpit with live Ready / Issues / Pending semantics.
+- Health sweeper, soak monitoring, queue invariants and maintenance tooling.
 
-Design rationale: [ARCHITECTURE_DECISION.md](ARCHITECTURE_DECISION.md) ·
-Technical architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
+## Security model
 
-## Status
+Secrets are read from environment variables or secret files and **must not be committed**. The repository ignores `.env`, `secrets/`, databases and common key formats.
 
-Proof of Concept — TorBox-only, no DUMB / Real-Debrid / Usenet. See
-[POC_REPORT.md](POC_REPORT.md) for measured results and the viability verdict.
+The control/API surfaces do not provide a general authentication layer. Keep them bound to localhost or a trusted private network/reverse proxy.
 
-## Components
+See [SECURITY.md](SECURITY.md).
 
-| Service | Role |
-|---|---|
-| `plex-scraper-resolver` | FastAPI: domain model, scoring, TorBox adapter, scraper interface, resolution state machine, session pinning, range-stream proxy, caches, debug/failure-injection |
-| `plex-scraper-vfs` | pyfuse3 mount at `/mnt/plex-scraper` — stable paths, honest sizes, real POSIX read/seek semantics for Plex |
-
-## Quick start (Unraid / Docker Compose)
+## Quick start
 
 ```bash
-cp .env.example .env               # fill in TORBOX_API_TOKEN (leave empty for
-                                   # offline demo mode: seeded mocks, synthetic content)
+cp .env.example .env
 cp config/preferences.example.yaml config/preferences.yaml
+# Add your TorBox token to .env or use a Docker secret file.
 docker compose up -d --build
 ```
 
-> Without a TorBox token the stack runs in demo mode: a seeded mock
-> provider/scraper serves deterministic bytes (or a real ffmpeg-generated MKV
-> if you place one at /mnt/cache/appdata/plex-scraper/data/demo-fixture.mkv),
-> so the whole pipeline can be exercised before wiring the real debrid.
+Without a TorBox token the project can run against the seeded demo provider for local testing.
 
-The control API is published on 127.0.0.1:${RESOLVER_HOST_PORT:-8282} — change
-RESOLVER_HOST_PORT in .env if the port is taken (e.g. by a DUMB stack).
+### Unraid / FUSE
 
-One-time host prep (verified on Unraid): the bind source must live under a
-shared mount (Unraid marks `/mnt/cache` as `shared`):
+The VFS bind source must live on a shared mount so the FUSE mount can propagate to Plex:
 
 ```bash
 mkdir -p /mnt/cache/appdata/plex-scraper/vfs
 ```
 
-Plex then gets the mount via a read-only bind of that host path — see the
-commented `plex` example in `docker-compose.yml`.
-
-Register the test set:
-
-```bash
-docker compose exec resolver python -m plex_scraper.cli register config/testset.example.yaml
-curl -s localhost:${RESOLVER_HOST_PORT:-8282}/media | jq
-ls "/mnt/cache/appdata/plex-scraper/vfs/TV/Breaking Bad/Season 01/"
-```
-
-Failure injection (the core PoC test, `DEBUG=true`):
-
-```bash
-curl -s -X POST localhost:8282/debug/media/<item-id>/fail-current
-# next playback resolves the next working source — same path, new generation
-```
+The example compose file binds the control services to localhost by default. Adapt paths and mount propagation to your host.
 
 ## Configuration
 
-- `.env` — secrets and endpoints (`TORBOX_API_TOKEN`, bind address, flags)
-- `config/preferences.yaml` — scoring preferences (resolution, video, audio,
-  language, release type, exclusions, size limits); every candidate gets a
-  transparent score breakdown, every reject a reason.
+Primary configuration is environment-driven. See:
 
-## Docs
+- [`.env.example`](.env.example)
+- [`config/preferences.example.yaml`](config/preferences.example.yaml)
+- [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- [`ARCHITECTURE_DECISION.md`](ARCHITECTURE_DECISION.md)
+- [`docs/RUNBOOKS.md`](docs/RUNBOOKS.md)
 
-- [docs/poc-test-plan.md](docs/poc-test-plan.md) — test set, layers, gates
-- [docs/plex-behaviour.md](docs/plex-behaviour.md) — Plex semantics, generation changes, bootstrap
-- [docs/sonarr-radarr-design.md](docs/sonarr-radarr-design.md) — integration design (not implemented in v0.1)
+Never put real API keys, Plex tokens, webhook secrets, internal hostnames, or private LAN addresses in committed config.
 
-## Hard non-goals v0.1
+## Testing
 
-Sonarr/Radarr/Overseerr replacement · Usenet/NZBDAV/Real-Debrid ·
-library-wide repair · DUMB compatibility · web UI · local media storage ·
-24/7 scraping.
+Portable suite:
+
+```bash
+pytest -q --ignore=tests/test_vfs_integration.py
+```
+
+The VFS integration suite requires privileged, real FUSE mount semantics and is intentionally kept out of GitHub-hosted CI. Run it on a suitable Linux/Unraid host:
+
+```bash
+pytest -q tests/test_vfs_integration.py
+```
+
+## Diagnostics
+
+The optional web role exposes the operations cockpit (default container port `8285`) with resolver health, ingest state, jobs, provider status, physical-library checks and playback traces.
+
+Keep it private; do not expose it directly to the public internet.
+
+## Project status
+
+The original proof-of-concept has evolved into a production-oriented 1.0.x stack. Historical PoC reports remain in the repository as design/test records.
 
 ## License
 
-MIT
-
-## Rollen & diagnostics GUI (oct 2026)
-
-Eén image, vier process-roles: `resolver`, `vfs`, `scraper` (optionele
-standalone scraper-API), `web` (read-only diagnostics GUI). Zie
-[README-ROLES.md](README-ROLES.md). Diagnostics GUI: `http://<host>:8285/` —
-health, resolver totals, queue, failures en per-item playback-trace
-(resolver → symlink → VFS → backend → read-test) met retry-acties.
+MIT — see [LICENSE](LICENSE).
