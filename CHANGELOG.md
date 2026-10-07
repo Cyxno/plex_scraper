@@ -12,6 +12,10 @@
 - GitHub-hosted CI now runs the portable suite and explicitly excludes the privileged VFS integration module; that suite requires real FUSE mount semantics and remains part of local/production preflight.
 - README updated from the old PoC framing to the current 1.0.x architecture and capabilities.
 - Added an explicit MIT `LICENSE` file.
+- Added `.dockerignore` so local secrets/state never enter Docker build context.
+- Public `docker-compose.yml` quick-start no longer requires a pre-existing secret file and works with `.env` or demo mode as documented.
+- Added contributing guidance plus redaction-aware bug/feature issue forms and a PR checklist.
+- Removed unused scratch/debug artifacts from the public tree.
 
 ## 1.0.3 — 2026-10-07 (JIT failover file-selectie-fix)
 
