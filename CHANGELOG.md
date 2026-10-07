@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.4 — 2026-10-08 (public-release hardening)
+
+### Public/privacy hardening
+- Removed site-specific LAN addresses and hostnames from committed defaults, deploy tooling and operator docs.
+- Disabled Sonarr/Radarr URL defaults are now empty; deployments must supply their own endpoints.
+- Added `secrets/`, private-key formats and local backup artifacts to `.gitignore`.
+- Added `SECURITY.md` with secret-handling and network-exposure guidance.
+
+### Release/CI hygiene
+- GitHub-hosted CI now runs the portable suite and explicitly excludes the privileged VFS integration module; that suite requires real FUSE mount semantics and remains part of local/production preflight.
+- README updated from the old PoC framing to the current 1.0.x architecture and capabilities.
+- Added an explicit MIT `LICENSE` file.
+
 ## 1.0.3 — 2026-10-07 (JIT failover file-selectie-fix)
 
 ### JIT-probe file-selectie (root cause van de valse failover-leegte)
