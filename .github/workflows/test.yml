@@ -15,9 +15,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install FUSE (integration tests use it when available)
-        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
-      - name: Run test suite
-        run: pytest -q
+      - name: Run portable test suite
+        run: pytest -q --ignore=tests/test_vfs_integration.py
+      - name: Explain VFS integration scope
+        run: |
+          echo "tests/test_vfs_integration.py requires real privileged FUSE mount semantics."
+          echo "It remains part of local/production preflight and is intentionally not run on GitHub-hosted runners."
