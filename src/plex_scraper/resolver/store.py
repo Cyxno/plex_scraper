@@ -358,7 +358,8 @@ class Store:
     async def job_progress(self, run_id: int, *, processed: int | None = None,
                            changed: int | None = None, recovered: int | None = None,
                            skipped: int | None = None, failed: int | None = None,
-                           current_item: str | None = None) -> None:
+                           current_item: str | None = None,
+                           progress_current: int | None = None) -> None:
         def fn(c: sqlite3.Connection):
             c.execute("""UPDATE maintenance_runs SET
                          processed=COALESCE(?,processed), changed=COALESCE(?,changed),
@@ -367,7 +368,7 @@ class Store:
                          progress_current=COALESCE(?,progress_current)
                          WHERE id=?""",
                       (processed, changed, recovered, skipped, failed,
-                       current_item, processed, run_id))
+                       current_item, progress_current, run_id))
         await self.run(fn)
 
     async def job_finish(self, run_id: int, status: str = "SUCCESS",

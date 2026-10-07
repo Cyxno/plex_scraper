@@ -13,11 +13,18 @@ Lees-only, begrensde queries (geen volledige event-scan per load).
 from __future__ import annotations
 
 import json
+import os
 import time
 
 from fastapi import APIRouter
 from fastapi import HTTPException as HTTPError
 from pydantic import BaseModel
+
+from plex_scraper.common.timefmt import age_seconds
+
+# Testbaar: tests monkeypatchen dit pad i.p.v. het.filesysteem te forcen.
+COVERAGE_PATH = os.environ.get("PLEX_SCRAPER_COVERAGE_PATH",
+                               "/data/coverage/latest.json")
 
 
 class MagnetBody(BaseModel):
@@ -213,13 +220,16 @@ def create_ops_routes(app, resolver) -> APIRouter:
         # P16-P19: coverage-semantiek — geen volgroen bij dead unmanaged media
         coverage = None
         try:
-            with open("/data/coverage/latest.json") as fh:
+            with open(COVERAGE_PATH, encoding="utf-8") as fh:
                 coverage = json.load(fh)
             # stale-marker: dit is een puntmoment-snapshot van een
-            # bestandsscan, geen live teller (audit 2026-10-07)
-            ts = coverage.get("timestamp")
-            if ts:
-                coverage["age_s"] = max(0, int(time.time() - float(ts)))
+            # bestandsscan, geen live teller (audit 2026-10-07).
+            # Leeftijd via de centrale parser: verdraagt epoch-s én -ms én
+            # ISO; ongeldig → age_s=None (UI toont 'timestamp unavailable',
+            # nooit een absurd getal als "20733d").
+            age = age_seconds(coverage.get("timestamp"))
+            coverage["age_s"] = round(age) if age is not None else None
+            coverage["age_valid"] = age is not None
         except Exception:
             coverage = None
         # Audit 2026-10-07: coverage/latest.json is een puntmoment-snapshot
@@ -236,14 +246,24 @@ def create_ops_routes(app, resolver) -> APIRouter:
             except Exception:                       # noqa: BLE001
                 ingest_block = None
             if ingest_block:
-                provider = ingest_block.get("provider") or {}
-                if provider.get("blocked") and \
-                        (provider.get("retry_in_s") or 0) > 3600:
+                # audit 2026-10-07: gebruik een eigen naam — de ingest-
+                # provider-state (blocked/retry) mag de resolver-derived
+                # 24h provider-stats (retries/transient/candidate_failures)
+                # niet overschrijven, anders toont de cockpit er permanent
+                # "–" voor.
+                iprovider = ingest_block.get("provider") or {}
+                if iprovider.get("blocked") and \
+                        (iprovider.get("retry_in_s") or 0) > 3600:
                     health = "DEGRADED"
-                elif provider.get("blocked") and health == "HEALTHY":
+                elif iprovider.get("blocked") and health == "HEALTHY":
                     health = "ATTENTION"            # gewone, begrensde pauze
         jobs = await store.job_runs(limit=3)
         running = [j for j in jobs if j["status"] == "RUNNING"]
+
+        # KPI-semantiek (audit 2026-10-07): Pending is het complement en
+        # wordt server-side berekend zodat Ready + Issues + Pending altijd
+        # exact = Total (rekenkundig sluitend, in één denominator).
+        pending = max(0, len(items) - counts.get("READY", 0) - len(no_source))
 
         return {
             "health": health,
@@ -259,7 +279,8 @@ def create_ops_routes(app, resolver) -> APIRouter:
                         "no_source": len(no_source),
                         "resolving": len(resolving),
                         "provider_wait": counts.get("PROVIDER_WAIT", 0),
-                        "identity_incomplete": identity_incomplete},
+                        "identity_incomplete": identity_incomplete,
+                        "pending": pending},
             "playback": {"active": len(streams), "streams": streams},
             "now": {"resolving": [{"item_id": i.id, "label":
                                    (i.series and
@@ -268,7 +289,10 @@ def create_ops_routes(app, resolver) -> APIRouter:
                     "jobs_running": [{"id": j["id"], "job_type": j["job_type"],
                                       "current_item": j.get("current_item"),
                                       "progress_total": j.get("progress_total"),
-                                      "progress_current": j.get("progress_current")}
+                                      "progress_current": j.get("progress_current"),
+                                      "processed": j.get("processed"),
+                                      "recovered": j.get("recovered"),
+                                      "started_at": j.get("started_at")}
                                      for j in running]},
             "recent_wins": wins,
             "provider": provider,

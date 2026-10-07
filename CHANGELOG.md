@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.0.2 — 2026-10-07 (cockpit UI/UX-overhaul + job-progress-fix)
+
+### Data-bugs (root causes gefixt)
+- store.job_progress(): de `progress_current`-kwarg bestond niet — de sweeper
+  crashte onzichtbaar (TypeError, stil ingeslikt) en schreef nooit tussentijds
+  progress. Active Now bleef daardoor eeuwig "0 / 50 · 0%" terwijl de run
+  wél liep. De kwarg bestaat nu en wordt correct gebonden.
+- ops.py: `now.jobs_running` bevat nu ook `started_at`/`processed`/
+  `recovered`; `library.pending` wordt server-side als complement berekend
+  (Ready + Issues + Pending = Total, één denominator).
+- ops.py: coverage-age via centrale parser (epoch-s én -ms én ISO); ongeldig
+  → `age_s: null` i.p.v. een absurd getal; coverage/ingest-provider-state
+  overschrijft de 24h provider-stats niet meer.
+- Nieuw `common/timefmt.py` + gemarkeerd UI-FMT-blok in cockpit.html: één
+  centrale relatieve-tijd-formatter (s/ms/ISO/duur), 'ago' exact één keer,
+  absurde leeftijden → "timestamp unavailable". Einde van "20733d ago ago".
+
+### Cockpit-UI (rustiger, minder blokkerig)
+- Compacte statusregel i.p.v. de brede ATTENTION-banner (volle banner alleen
+  bij echte storingen), Library health als één cluster (percentage,
+  gesegmenteerde balk, klikbare Ready/Issues/Pending), Automation als
+  stat-strip, Physical/Coverage/Legacy audit als rustige Diagnostics-lijst.
+- Active now is een live job-component: RUNNING met progressbar, verwerkt/
+  percentage en live elapsed-ticker; idle → compacte regel, nooit een stale
+  0/50-kaart. Run history: duur als "25m 9s", live elapsed bij RUNNING,
+  compacte rijen en kleinere badges. Subtielere sidebar-active-state.
+- Responsive: health-cluster en stat-strip stacken; tabellen scrollen zonder
+  layoutbreuk (getest op 1920/1366/tablet/390px).
+
+### Tests
+- pytest: timefmt (s/ms/ISO/invalid), ops UI-semantiek (active-job volgt
+  store, idle → leeg, Ready+Issues+Pending=Total, stale coverage/legacy
+  audit degraderen health niet, SUCCESS/DEFERRED/INTERRUPTED + startup-
+  reconcile, sweep-serialisatie), en node-gedreven asserts op het
+  UI-FMT-blok uit de template zelf (Dockerfile.test: +nodejs).
+
 ## 1.0.1 — 2026-10-07 (healthcheck-fix + cockpit KPI-audit)
 
 ### Healthcheck (na VFS-unhealthy-events)

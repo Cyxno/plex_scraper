@@ -6,19 +6,19 @@
 <title>plex_scraper cockpit</title>
 <style>
 :root{
-  --bg:#0a0c10; --surface-1:#11141a; --surface-2:#171b23; --surface-3:#1e2430;
-  --border:#232a35; --border-strong:#303947;
-  --text:#e6e9ef; --text-secondary:#aab2c0; --text-muted:#6d7684;
+  --bg:#0b0d12; --surface-1:#12151d; --surface-2:#171b25; --surface-3:#1d2430;
+  --hairline:#1d232e; --hairline-strong:#29303e;
+  --text:#e8ebf1; --text-secondary:#a8b0c0; --text-muted:#6b7484;
   --accent:#6ea8fe; --accent-dim:#2c3e5d;
-  --success:#4cc38a; --warning:#e0a83c; --danger:#f26d6d;
-  --radius:8px; --radius-sm:6px;
+  --success:#4cc38a; --warning:#e0a83c; --danger:#f26d6d; --retry:#bc8cff;
+  --radius:12px; --radius-sm:8px;
   --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px;
   --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--font);
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 var(--font);
   display:flex}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
@@ -27,155 +27,214 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{
   outline:2px solid var(--accent);outline-offset:1px}
 .num{font-variant-numeric:tabular-nums}
 /* ---------- sidebar ---------- */
-#sidebar{width:190px;flex:0 0 190px;background:var(--surface-1);
-  border-right:1px solid var(--border);display:flex;flex-direction:column;
+#sidebar{width:196px;flex:0 0 196px;background:transparent;
+  display:flex;flex-direction:column;
   position:sticky;top:0;height:100vh}
-#sidebar .brand{padding:var(--sp-4);font-size:13px;font-weight:700;
-  letter-spacing:.04em;color:var(--text-secondary);
-  border-bottom:1px solid var(--border)}
+#sidebar .brand{padding:20px var(--sp-4) 14px;font-size:13px;font-weight:700;
+  letter-spacing:.04em;color:var(--text-secondary)}
 #sidebar .brand b{color:var(--accent)}
-#sidebar nav{padding:var(--sp-2);display:flex;flex-direction:column;gap:2px;flex:1}
-#sidebar nav button{display:flex;align-items:center;gap:9px;width:100%;
-  background:none;border:0;color:var(--text-muted);padding:8px 10px;
-  border-radius:var(--radius-sm);text-align:left}
-#sidebar nav button:hover{background:var(--surface-2);color:var(--text-secondary)}
-#sidebar nav button.on{background:var(--surface-3);color:var(--text);font-weight:600}
-#sidebar nav button .ico{width:16px;text-align:center;opacity:.85}
-#sidebar nav button .cnt{margin-left:auto;font-size:11px;color:var(--text-muted)}
-#sidebar nav button.on .cnt{color:var(--text-secondary)}
-#sidebar .foot{padding:var(--sp-3) var(--sp-4);border-top:1px solid var(--border);
-  font-size:11px;color:var(--text-muted)}
+#sidebar nav{padding:0 var(--sp-2);display:flex;flex-direction:column;gap:1px;flex:1}
+#sidebar nav button{position:relative;display:flex;align-items:center;gap:10px;width:100%;
+  background:none;border:0;color:var(--text-muted);padding:8px 12px;
+  border-radius:var(--radius-sm);text-align:left;font-size:13.5px}
+#sidebar nav button:hover{background:var(--surface-1);color:var(--text-secondary)}
+#sidebar nav button.on{background:var(--surface-1);color:var(--text);font-weight:600}
+#sidebar nav button.on::before{content:'';position:absolute;left:0;top:9px;bottom:9px;
+  width:2px;border-radius:2px;background:var(--accent)}
+#sidebar nav button .ico{width:18px;text-align:center;font-size:13px;opacity:.9}
+#sidebar nav button .cnt{margin-left:auto;font-size:10.5px;line-height:1;
+  color:var(--text-secondary);background:var(--surface-2);border-radius:9px;
+  padding:3px 7px;font-variant-numeric:tabular-nums}
+#sidebar nav button.on .cnt{color:var(--text);background:var(--surface-3)}
+#sidebar .foot{padding:var(--sp-3) var(--sp-4);font-size:11px;color:var(--text-muted)}
 #sidebar .foot .row{display:flex;justify-content:space-between;margin-top:3px}
 .st-dot{display:inline-block;width:7px;height:7px;border-radius:50%;
-  background:var(--success);margin-right:5px;vertical-align:1px}
+  background:var(--success);margin-right:2px;flex:0 0 auto}
 .st-dot.warn{background:var(--warning)} .st-dot.err{background:var(--danger)}
 .st-dot.off{background:var(--text-muted)}
 /* ---------- main + topbar ---------- */
-#main{flex:1;min-width:0;display:flex;flex-direction:column}
-#topbar{display:flex;align-items:center;gap:var(--sp-3);padding:10px var(--sp-5);
-  border-bottom:1px solid var(--border);background:var(--surface-1);
-  position:sticky;top:0;z-index:5}
-#pagetitle{font-size:15px;font-weight:700}
-#pagesub{font-size:12px;color:var(--text-muted)}
+#main{flex:1;min-width:0;display:flex;flex-direction:column;
+  background:linear-gradient(180deg,var(--surface-1) 0,var(--bg) 240px)}
+#topbar{display:flex;align-items:baseline;gap:var(--sp-3);padding:18px var(--sp-6) 14px;
+  position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(6px)}
+#pagetitle{font-size:17px;font-weight:700}
+#pagesub{font-size:12.5px;color:var(--text-muted)}
 #livewrap{margin-left:auto;display:flex;align-items:center;gap:var(--sp-3);
   font-size:12px;color:var(--text-muted)}
-#livewrap .pill{border:1px solid var(--border);border-radius:20px;
-  padding:2px 10px;display:flex;align-items:center;gap:6px}
-main{padding:var(--sp-4) var(--sp-5);max-width:1280px;width:100%;margin:0 auto}
+#livewrap .pill{border:1px solid var(--hairline-strong);border-radius:20px;
+  padding:3px 11px;display:flex;align-items:center;gap:6px;background:var(--surface-1)}
+main{padding:var(--sp-2) var(--sp-6) var(--sp-6);max-width:1240px;width:100%;margin:0 auto}
 section{display:none}
 section.on{display:block}
-h2.sec{font-size:11px;text-transform:uppercase;letter-spacing:.09em;
-  color:var(--text-muted);margin:var(--sp-5) 0 var(--sp-2);font-weight:600}
-/* ---------- banner ---------- */
-.banner{padding:9px var(--sp-4);border-radius:var(--radius);margin:2px 0 var(--sp-4);
-  border:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:13px;
-  background:var(--surface-1)}
-.banner.HEALTHY{border-color:color-mix(in srgb,var(--success) 35%,var(--border))}
+h2.sec{font-size:12.5px;font-weight:600;letter-spacing:.01em;
+  color:var(--text-muted);margin:var(--sp-5) 0 var(--sp-2)}
+/* ---------- status line / banners ---------- */
+.statusline{display:flex;align-items:center;gap:9px;font-size:13.5px;
+  padding:2px 0;flex-wrap:wrap}
+.statusline .cause{color:var(--text-muted);font-weight:400}
+.banner{padding:10px 14px;border-radius:var(--radius);margin:0 0 var(--sp-4);
+  display:flex;align-items:center;gap:10px;font-size:13px;
+  background:var(--surface-1);border:1px solid var(--hairline-strong)}
+.banner .cause{color:var(--text-muted);font-weight:400}
+.banner.HEALTHY{border-color:color-mix(in srgb,var(--success) 30%,transparent)}
 .banner.HEALTHY .h{color:var(--success)}
-.banner.DEGRADED,.banner.ATTENTION{border-color:color-mix(in srgb,var(--warning) 45%,var(--border))}
-.banner.DEGRADED .h,.banner.ATTENTION .h{color:var(--warning)}
-.banner.ERROR{border-color:color-mix(in srgb,var(--danger) 45%,var(--border))}
+.banner.DEGRADED,.banner.ATTENTION,.banner.WARNING{
+  border-color:color-mix(in srgb,var(--warning) 38%,transparent)}
+.banner.DEGRADED .h,.banner.ATTENTION .h,.banner.WARNING .h{color:var(--warning)}
+.banner.ERROR{border-color:color-mix(in srgb,var(--danger) 38%,transparent)}
 .banner.ERROR .h{color:var(--danger)}
-/* ---------- system strip ---------- */
-.strip{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-bottom:var(--sp-4)}
-.strip .cell{background:var(--surface-1);border:1px solid var(--border);
-  border-radius:var(--radius-sm);padding:5px 11px;font-size:11.5px;
-  color:var(--text-secondary);display:flex;align-items:center;gap:6px}
-.strip .cell b{color:var(--text);font-weight:600}
-/* ---------- KPI ---------- */
+/* ---------- library health cluster ---------- */
+.hc{background:var(--surface-1);border-radius:var(--radius);padding:18px 20px 16px}
+.hc-top{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.hc-title{font-size:14px;font-weight:650;color:var(--text-secondary)}
+.hc-pct{font-size:27px;font-weight:700;margin-left:10px;color:var(--text)}
+.hc-sub{font-size:12px;color:var(--text-muted)}
+.hc-bar{display:flex;gap:3px;height:8px;border-radius:5px;overflow:hidden;
+  margin:13px 0 15px;background:var(--surface-3)}
+.hc-bar span{display:block;height:100%;min-width:3px;border-radius:2px;
+  transition:width .6s}
+.hc-bar .s-ok{background:var(--success)} .hc-bar .s-warn{background:var(--warning)}
+.hc-bar .s-err{background:var(--danger)}
+.hc-stats{display:flex;gap:34px;flex-wrap:wrap}
+.hc-stat{background:none;border:0;padding:0;text-align:left;color:var(--text-secondary);
+  font:inherit;font-size:13px;display:flex;align-items:baseline;gap:8px;border-radius:4px}
+.hc-stat b{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
+.hc-stat.ok b{color:var(--success)} .hc-stat.err b{color:var(--danger)}
+.hc-stat.warn b{color:var(--warning)}
+.hc-stat:hover{color:var(--text)}
+.hc-stat:hover b{text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--hairline-strong)}
+/* ---------- stat strip ---------- */
+.statstrip{display:flex;flex-wrap:wrap;background:var(--surface-1);
+  border-radius:var(--radius);padding:4px 6px}
+.stat{display:flex;align-items:baseline;gap:9px;padding:11px 18px;flex:1 1 auto;min-width:158px}
+.stat+.stat{border-left:1px solid var(--hairline)}
+.stat .s-l{font-size:12.5px;color:var(--text-secondary)}
+.stat b{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.stat .s-s{font-size:11px;color:var(--text-muted)}
+/* ---------- active job / idle lines ---------- */
+.idleline{font-size:13px;color:var(--text-muted);padding:10px 2px}
+.jobcard{background:var(--surface-1);border-radius:var(--radius);padding:14px 18px 15px;
+  margin-bottom:var(--sp-2)}
+.jc-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin-bottom:9px}
+.jc-name{font-size:14px;font-weight:650}
+.jc-item{color:var(--text-muted);font-weight:400;font-size:12.5px}
+.jc-meta{display:flex;gap:16px;font-size:12px;color:var(--text-secondary);margin-top:7px;flex-wrap:wrap}
+/* ---------- win rows / diagnostics ---------- */
+.winlist,.diaglist{background:var(--surface-1);border-radius:var(--radius);overflow:hidden}
+.winrow{display:flex;align-items:center;gap:12px;padding:10px 18px;
+  border-bottom:1px solid var(--hairline)}
+.winrow:last-child{border-bottom:0}
+.w-label{font-size:13.5px;font-weight:600}
+.w-main{flex:1;min-width:0}
+.w-sub{font-size:12px;color:var(--text-muted);display:block;margin-top:1px}
+.w-file{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  display:inline-block;vertical-align:bottom}
+.w-right{margin-left:auto;display:flex;align-items:center;gap:9px;white-space:nowrap;
+  font-size:12px;color:var(--text-muted)}
+.dg-row{display:flex;align-items:baseline;gap:10px;padding:9px 18px;
+  border-bottom:1px solid var(--hairline);font-size:12.5px;flex-wrap:wrap}
+.dg-row:last-child{border-bottom:0}
+.dg-name{color:var(--text-muted);flex:0 0 128px}
+.dg-val{color:var(--text);font-weight:600;display:inline-flex;align-items:center}
+.dg-sub{color:var(--text-muted);font-size:11.5px}
+/* ---------- KPI (providers/ingest detail) ---------- */
 .grid{display:grid;gap:var(--sp-3)}
-.kpis{grid-template-columns:repeat(auto-fill,minmax(158px,1fr))}
-.kpi{background:var(--surface-1);border:1px solid var(--border);border-radius:var(--radius);
-  padding:10px 12px}
-.kpi .l{font-size:11px;color:var(--text-muted);text-transform:uppercase;
-  letter-spacing:.05em;display:flex;align-items:center;gap:6px}
-.kpi .n{font-size:21px;font-weight:700;margin:2px 0;font-variant-numeric:tabular-nums}
-.kpi .s{font-size:11px;color:var(--text-secondary)}
+.kpis{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.kpi{background:var(--surface-1);border-radius:var(--radius-sm);padding:10px 13px}
+.kpi .l{font-size:11.5px;color:var(--text-muted);display:flex;align-items:center;gap:6px}
+.kpi .n{font-size:19px;font-weight:700;margin:2px 0;font-variant-numeric:tabular-nums}
+.kpi .s{font-size:11px;color:var(--text-muted)}
 .kpi.ok .n{color:var(--success)} .kpi.err .n{color:var(--danger)}
-.kpi.warn .n{color:var(--warning)} .kpi.run .n{color:var(--run,#58a6fe)}
+.kpi.warn .n{color:var(--warning)} .kpi.run .n{color:var(--accent)}
 .cols{grid-template-columns:1fr 1fr}
-@media(max-width:900px){.cols{grid-template-columns:1fr}}
-/* ---------- cards/panels ---------- */
-.panel{background:var(--surface-1);border:1px solid var(--border);
-  border-radius:var(--radius);padding:11px 13px;margin-bottom:var(--sp-2)}
+.ovgrid{display:grid;grid-template-columns:1.1fr 1fr;gap:var(--sp-6);align-items:start}
+@media(max-width:1000px){.ovgrid{grid-template-columns:1fr}.cols{grid-template-columns:1fr}}
+/* ---------- panels ---------- */
+.panel{background:var(--surface-1);border-radius:var(--radius);
+  padding:13px 16px;margin-bottom:var(--sp-2)}
 .panel h3{margin:0 0 3px;font-size:13px;font-weight:600}
 .muted{color:var(--text-muted);font-size:12px}
-.badge{display:inline-block;padding:1px 8px;border-radius:5px;font-size:10.5px;
-  font-weight:600;border:1px solid var(--border);color:var(--text-secondary);
-  letter-spacing:.02em}
-.b-SUCCESS,.b-READY,.b-RECOVERED,.b-COMPLETED,.b-KEPT,.b-HEALTHY{color:var(--success);border-color:color-mix(in srgb,var(--success) 45%,transparent)}
-.b-FAILED,.b-NO_SOURCE,.b-ERROR,.b-REJECTED{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent)}
-.b-WARNING,.b-ATTENTION,.b-DEGRADED,.b-SUSPECT{color:var(--warning);border-color:color-mix(in srgb,var(--warning) 45%,transparent)}
-.b-RUNNING,.b-RESOLVING{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
-.b-RETRYING,.b-DEFERRED,.b-INTERRUPTED{color:var(--retry,#bc8cff);border-color:color-mix(in srgb,var(--retry,#bc8cff) 45%,transparent)}
+/* ---------- badges ---------- */
+.badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:5px;
+  font-size:10px;font-weight:600;letter-spacing:.03em;
+  border:1px solid var(--hairline-strong);color:var(--text-secondary);white-space:nowrap}
+.b-SUCCESS,.b-READY,.b-RECOVERED,.b-COMPLETED,.b-KEPT,.b-HEALTHY{color:var(--success);border-color:color-mix(in srgb,var(--success) 40%,transparent)}
+.b-FAILED,.b-NO_SOURCE,.b-ERROR,.b-REJECTED{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent)}
+.b-WARNING,.b-ATTENTION,.b-DEGRADED,.b-SUSPECT{color:var(--warning);border-color:color-mix(in srgb,var(--warning) 40%,transparent)}
+.b-RUNNING,.b-RESOLVING{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+.b-RETRYING,.b-DEFERRED,.b-INTERRUPTED{color:var(--retry);border-color:color-mix(in srgb,var(--retry) 40%,transparent)}
 .b-NO_MATCH,.b-neutral,.b-INFO,.b-BUSY,.b-Movie,.b-UNKNOWN{color:var(--text-muted)}
-.b-TV{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+.b-TV{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 35%,transparent)}
+.pulse{display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--accent);margin-right:6px;flex:0 0 auto;
+  animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 /* ---------- tables ---------- */
-.tablewrap{background:var(--surface-1);border:1px solid var(--border);
-  border-radius:var(--radius);overflow:auto}
+.tablewrap{background:var(--surface-1);border-radius:var(--radius);overflow:auto}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{color:var(--text-muted);text-align:left;font-size:10.5px;text-transform:uppercase;
-  letter-spacing:.07em;padding:7px 10px;border-bottom:1px solid var(--border);
+  letter-spacing:.06em;padding:9px 12px;border-bottom:1px solid var(--hairline-strong);
   font-weight:600;white-space:nowrap}
-td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+td{padding:7px 12px;border-bottom:1px solid var(--hairline);vertical-align:top}
 tr:last-child td{border-bottom:0}
-tbody tr:hover td{background:var(--surface-2)}
+tbody tr:hover td{background:rgba(110,168,254,.04)}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .mono{font-family:var(--mono);font-size:12px}
 /* ---------- controls ---------- */
-.seg{display:inline-flex;background:var(--surface-1);border:1px solid var(--border);
-  border-radius:var(--radius-sm);padding:2px;gap:1px;flex-wrap:wrap}
+.seg{display:inline-flex;background:var(--surface-1);border-radius:var(--radius-sm);
+  padding:2px;gap:1px;flex-wrap:wrap}
 .seg button{background:none;border:0;color:var(--text-muted);padding:4px 11px;
-  border-radius:4px;font-size:12px}
+  border-radius:6px;font-size:12px}
 .seg button:hover{color:var(--text-secondary)}
 .seg button.on{background:var(--surface-3);color:var(--text);font-weight:600}
 input[type=search],select{background:var(--surface-1);color:var(--text);
-  border:1px solid var(--border);border-radius:var(--radius-sm);padding:5px 10px;
+  border:1px solid var(--hairline-strong);border-radius:var(--radius-sm);padding:5px 10px;
   font:inherit;font-size:12.5px;min-width:160px;height:30px}
-.progress{height:5px;background:var(--surface-3);border-radius:3px;overflow:hidden;
-  margin-top:4px}
+.progress{height:5px;background:var(--surface-3);border-radius:3px;overflow:hidden}
 .progress i{display:block;height:100%;background:var(--accent);transition:width .6s}
-.empty{padding:26px;text-align:center;color:var(--text-muted)}
+.empty{padding:30px;text-align:center;color:var(--text-muted)}
 .empty .e-ico{font-size:18px;display:block;margin-bottom:6px}
 .empty .e-title{display:block;color:var(--text-secondary);font-weight:600;margin-bottom:3px}
 .pager{display:flex;gap:8px;align-items:center;margin:8px 0}
 .pager button{background:var(--surface-1);color:var(--text);
-  border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 12px}
+  border:1px solid var(--hairline-strong);border-radius:var(--radius-sm);padding:4px 12px}
 .bar{display:flex;gap:3px;flex-wrap:wrap;margin-top:4px}
 .bar span{padding:1px 7px;border-radius:4px;font-size:10.5px;
-  border:1px solid var(--border);color:var(--text-muted)}
+  border:1px solid var(--hairline);color:var(--text-muted)}
 .bar b{color:var(--text)}
 /* ---------- buttons ---------- */
-button.act{background:var(--surface-2);color:var(--text);border:1px solid var(--border-strong);
+button.act{background:var(--surface-2);color:var(--text);border:1px solid var(--hairline-strong);
   border-radius:var(--radius-sm);padding:3px 10px;font-size:11.5px;font-weight:500}
 button.act:hover{border-color:var(--accent);background:var(--surface-3)}
 button.act:disabled{opacity:.4;cursor:default}
-button.act.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,var(--border-strong))}
+button.act.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 35%,var(--hairline-strong))}
 button.act.danger:hover{border-color:var(--danger)}
 button.act.primary{background:var(--accent-dim);border-color:var(--accent);color:var(--text)}
 .actmsg{font-size:12px;margin-top:4px}
 .actmsg.SUCCESS{color:var(--success)} .actmsg.FAILED,.actmsg.REJECTED{color:var(--danger)}
 .actmsg.RUNNING,.actmsg.BUSY{color:var(--accent)} .actmsg.KEPT,.actmsg.NO_MATCH{color:var(--warning)}
 /* ---------- activity timeline ---------- */
-.tl{background:var(--surface-1);border:1px solid var(--border);border-radius:var(--radius)}
-.tl-row{display:flex;gap:var(--sp-3);padding:8px 13px;border-bottom:1px solid var(--border);
+.tl{background:var(--surface-1);border-radius:var(--radius);overflow:hidden}
+.tl-row{display:flex;gap:var(--sp-3);padding:9px 16px;border-bottom:1px solid var(--hairline);
   align-items:baseline}
 .tl-row:last-child{border-bottom:0}
-.tl-row:hover{background:var(--surface-2)}
+.tl-row:hover{background:rgba(110,168,254,.04)}
 .tl-time{color:var(--text-muted);font-size:11.5px;flex:0 0 42px;
   font-variant-numeric:tabular-nums}
 .tl-ico{flex:0 0 14px;text-align:center;font-size:12px}
 .tl-main{flex:1;min-width:0}
 .tl-title{font-size:13px;font-weight:600}
-.tl-title .cat{color:var(--text-muted);font-weight:500;font-size:11.5px;
-  text-transform:uppercase;letter-spacing:.05em;margin-right:6px}
+.tl-title .cat{color:var(--text-muted);font-weight:500;font-size:11px;
+  margin-right:6px}
 .tl-sub{font-size:12px;color:var(--text-secondary)}
 .tl-right{flex:0 0 auto;text-align:right;font-size:11.5px;color:var(--text-muted)}
 details{margin-top:4px}
 summary{cursor:pointer;color:var(--accent);font-size:12px}
 /* ---------- issue rows ---------- */
-.iss{display:flex;gap:var(--sp-3);align-items:flex-start;padding:10px 13px;
-  border-bottom:1px solid var(--border);background:var(--surface-1)}
+.iss{display:flex;gap:var(--sp-3);align-items:flex-start;padding:11px 16px;
+  border-bottom:1px solid var(--hairline);background:var(--surface-1)}
 .iss:first-child{border-radius:var(--radius) var(--radius) 0 0}
 .iss:last-child{border-radius:0 0 var(--radius) var(--radius);border-bottom:0}
 .iss-body{flex:1;min-width:0}
@@ -184,23 +243,23 @@ summary{cursor:pointer;color:var(--accent);font-size:12px}
 #itemdlg{position:fixed;inset:0;background:rgba(4,6,10,.7);display:none;
   overflow:auto;z-index:10}
 #itemdlg .inner{background:var(--bg);max-width:980px;margin:24px auto;
-  border:1px solid var(--border-strong);border-radius:10px;padding:var(--sp-4)}
+  border:1px solid var(--hairline-strong);border-radius:10px;padding:var(--sp-4)}
 #modal{position:fixed;inset:0;background:rgba(4,6,10,.7);display:none;z-index:20;
   align-items:center;justify-content:center}
-#modal .box{background:var(--surface-1);border:1px solid var(--border-strong);
+#modal .box{background:var(--surface-1);border:1px solid var(--hairline-strong);
   border-radius:10px;padding:var(--sp-4);min-width:340px;max-width:480px}
 #modal input,#modal select{width:100%;margin:6px 0 10px}
 #modal .row{display:flex;gap:8px;justify-content:flex-end;margin-top:var(--sp-3)}
 #toasts{position:fixed;bottom:16px;right:16px;z-index:30;display:flex;
   flex-direction:column;gap:8px}
-.toast{background:var(--surface-2);border:1px solid var(--border-strong);
+.toast{background:var(--surface-2);border:1px solid var(--hairline-strong);
   border-left:3px solid var(--accent);border-radius:var(--radius-sm);
   padding:8px 13px;font-size:12.5px;max-width:380px;box-shadow:0 6px 24px rgba(0,0,0,.4)}
 .toast.SUCCESS{border-left-color:var(--success)}
 .toast.FAILED,.toast.REJECTED,.toast.ERROR{border-left-color:var(--danger)}
 .toast.KEPT,.toast.NO_MATCH{border-left-color:var(--warning)}
 .chain{font-family:var(--mono);font-size:12px;line-height:1.9}
-.chain .step{display:block;padding:2px 8px;border-left:2px solid var(--border)}
+.chain .step{display:block;padding:2px 8px;border-left:2px solid var(--hairline-strong)}
 .chain .ok{border-color:var(--success)} .chain .bad{border-color:var(--danger)}
 .arrow{color:var(--text-muted);padding-left:14px}
 .matrix td:first-child{color:var(--text-secondary)}
@@ -209,18 +268,25 @@ summary{cursor:pointer;color:var(--accent);font-size:12px}
   body{flex-direction:column}
   #sidebar{width:100%;flex:0 0 auto;height:auto;position:static;
     flex-direction:row;align-items:center;overflow-x:auto}
-  #sidebar .brand{border-bottom:0;border-right:1px solid var(--border);white-space:nowrap}
+  #sidebar .brand{white-space:nowrap;padding:12px var(--sp-3)}
   #sidebar nav{flex-direction:row;padding:var(--sp-1)}
   #sidebar nav button{width:auto;white-space:nowrap;padding:6px 9px}
+  #sidebar nav button.on::before{display:none}
   #sidebar nav button .cnt{margin-left:4px}
   #sidebar .foot{display:none}
-  main{padding:var(--sp-3)}
-  .kpis{grid-template-columns:1fr 1fr}
+  #topbar{padding:14px var(--sp-3) 10px}
+  main{padding:var(--sp-1) var(--sp-3) var(--sp-4)}
   .iss{flex-direction:column}
   .iss-acts{justify-content:flex-start;width:100%}
   .tl-row{flex-wrap:wrap}
+  .hc{padding:14px 16px 13px}
+  .hc-stats{gap:20px}
+  .stat{min-width:140px;padding:9px 13px}
+  .stat+.stat{border-left:0}
+  .w-file{max-width:180px}
 }
-@media(prefers-reduced-motion:reduce){.progress i{transition:none}}
+@media(prefers-reduced-motion:reduce){
+  .progress i{transition:none}.pulse{animation:none}}
 </style>
 </head>
 <body>
@@ -250,14 +316,17 @@ summary{cursor:pointer;color:var(--accent);font-size:12px}
 </div>
 <main>
 <section id="s-overview" class="on">
-  <div id="healthbanner" class="banner" aria-live="polite"><span class="muted">Loading…</span></div>
-  <h2 class="sec">Library</h2><div id="kpilib" class="grid kpis"></div>
-  <h2 class="sec">Automation &amp; providers</h2><div id="kpiauto" class="grid kpis"></div>
-  <div class="grid cols" style="margin-top:var(--sp-4)">
+  <div id="healthbanner" aria-live="polite"><div class="statusline"><span class="muted">Loading…</span></div></div>
+  <h2 class="sec">Library health</h2>
+  <div id="healthcluster"></div>
+  <h2 class="sec">Automation</h2>
+  <div id="statstrip"></div>
+  <div class="ovgrid">
     <div><h2 class="sec">Active now</h2><div id="nowactive"></div></div>
     <div><h2 class="sec">Recent automatic recoveries</h2><div id="wins"></div></div>
   </div>
-  <h2 class="sec">Health sweeper</h2><div id="sweeperbox"></div>
+  <h2 class="sec">Diagnostics</h2>
+  <div id="diagnostics"></div>
 </section>
 <section id="s-activity">
   <div class="seg" id="actfilters" style="margin-bottom:var(--sp-3)">
@@ -303,13 +372,63 @@ summary{cursor:pointer;color:var(--accent);font-size:12px}
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const ago = ts => { const d = Math.round(Date.now()/1000 - ts);
-  if (d < 60) return `${d}s ago`; if (d < 3600) return `${Math.round(d/60)}m ago`;
-  if (d < 86400) return `${Math.round(d/3600)}h ago`; return `${Math.round(d/86400)}d ago`; };
 const fmtIn = s => s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s/60)}m` : `${Math.round(s/3600)}h`;
+/* UI-FMT-BEGIN — pure time/number formatters, node-getest (audit 2026-10-07).
+   Eén centrale relatieve-tijd-formatter: accepteert epoch-s, epoch-ms, ISO of
+   een duur in seconden; plakt 'ago' exact één keer achter het label; ongeldige
+   of absurde leeftijden ("20733d") → 'timestamp unavailable'.
+   Houd dit blok dependency-free (hierbatim geëxtraheerd door de tests). */
+const UI_MAX_AGE_S = 10 * 365.25 * 86400;
+function parseTs(v){
+  if (v === null || v === undefined || v === '' || typeof v === 'boolean') return null;
+  let t;
+  if (typeof v === 'number') t = v;
+  else if (typeof v === 'string'){
+    const s = v.trim(); if (!s) return null;
+    if (/^-?\d+(\.\d+)?$/.test(s)) t = parseFloat(s);
+    else { const p = Date.parse(s); if (Number.isNaN(p)) return null; t = p / 1000; }
+  } else return null;
+  if (!Number.isFinite(t)) return null;
+  if (t > 1e11) t /= 1000;                       // milliseconden → seconden
+  if (t <= 0) return null;
+  return t;
+}
+function ageSeconds(v, nowSec){
+  const t = parseTs(v); if (t === null) return null;
+  const a = (nowSec ?? Date.now() / 1000) - t;
+  if (a < -90 || a > UI_MAX_AGE_S) return null;  // toekomst-skew / absurde leeftijd
+  return Math.max(0, a);
+}
+function fmtAgeLabel(a){
+  if (a === null || a === undefined || !Number.isFinite(a) || a < 0
+      || a > UI_MAX_AGE_S) return 'timestamp unavailable';
+  if (a < 60) return `${Math.max(1, Math.round(a))}s ago`;
+  if (a < 3600) return `${Math.round(a / 60)} min ago`;
+  if (a < 48 * 3600) return `${Math.round(a / 3600)}h ago`;
+  return `${Math.round(a / 86400)}d ago`;
+}
+function fmtAgo(v, nowSec){ return fmtAgeLabel(ageSeconds(v, nowSec)); }
+function fmtDur(s){
+  if (s === null || s === undefined || !Number.isFinite(s) || s < 0) return '–';
+  s = Math.round(s);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), sec = s % 60;
+  if (m < 60) return sec ? `${m}m ${sec}s` : `${m}m`;
+  const h = Math.floor(m / 60), mm = m % 60;
+  if (h < 24) return mm ? `${h}h ${mm}m` : `${h}h`;
+  const d = Math.floor(h / 24), hh = h % 24;
+  return hh ? `${d}d ${hh}h` : `${d}d`;
+}
+function fmtNum(n){
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return '–';
+  return Number(n).toLocaleString('en-US');
+}
+/* UI-FMT-END */
 const badge = (t,c)=>`<span class="badge b-${esc(c||t)}">${esc(t)}</span>`;
 const NA = '<span class="muted">N/A</span>';
 const DOT = (cls='')=>`<span class="st-dot ${cls}"></span>`;
+const JOB_LABEL = {health_sweeper:'Health sweeper', library_audit:'Library audit'};
+const jobName = t => JOB_LABEL[t] || String(t||'').replace(/_/g,' ');
 let failures = 0;
 const SHOT = new URLSearchParams(location.search).has('shot');
 if (SHOT) window.fetch = path => {
@@ -356,7 +475,7 @@ function paintInto(sel, key, html){
 const kpi = (label,n,cls='',sub='')=>`<div class="kpi ${cls}"><div class="l">${label}</div><div class="n">${n??'–'}</div>${sub?`<div class="s">${sub}</div>`:''}</div>`;
 const card = (t,sub,right)=>`<div class="panel"><h3>${t} <span style="float:right">${right||''}</span></h3><div>${sub||''}</div></div>`;
 const empty = (title,sub)=>`<div class="empty"><span class="e-ico">✓</span><span class="e-title">${esc(title)}</span><br>${esc(sub||'')}</div>`;
-const pct = j => j.progress_total ? Math.min(99, Math.round((j.progress_current||0)/j.progress_total*100)) : 0;
+const runBadge = ()=>`<span class="badge b-RUNNING"><span class="pulse"></span>RUNNING</span>`;
 const REJHUMAN = {
   identity_wrong_show:'wrong series', identity_pack_missing_episode:'episode not in pack',
   identity_wrong_movie:'wrong movie', identity_wrong_year:'wrong year',
@@ -389,7 +508,7 @@ async function doAction(itemId, action, body){
 async function runAction(ev, itemId, action, body, sel){
   const btn = ev && ev.target;
   if (btn) btn.disabled = true;
-  if (sel) $(sel).innerHTML = `<div class="actmsg RUNNING">${badge('RUNNING')} Working…</div>`;
+  if (sel) $(sel).innerHTML = `<div class="actmsg RUNNING">${runBadge()} Working…</div>`;
   try{
     const out = await doAction(itemId, action, body);
     toast(out.status||'RUNNING', out.message);
@@ -430,79 +549,125 @@ function openModal(title, html, onOk){
 }
 function closeModal(){ $('#modal').style.display = 'none'; }
 /* ---------- overview ---------- */
+function activeNowHtml(d, nowSec){
+  const now = nowSec ?? d.generated_at ?? Date.now()/1000;
+  const jobs = (d.now && d.now.jobs_running) || [];
+  const resolving = (d.now && d.now.resolving) || [];
+  if (!jobs.length && !resolving.length)
+    return `<div class="idleline">No automation currently running</div>`;
+  const jrows = jobs.map(j=>{
+    const total = j.progress_total ?? 0;
+    const cur = Math.max(0, j.progress_current ?? j.processed ?? 0);
+    const p = total ? Math.min(100, Math.round(cur/total*100)) : null;
+    const elapsed = j.started_at ? Math.max(0, now - j.started_at) : null;
+    return `<div class="jobcard" data-run="${j.id}">
+      <div class="jc-head">
+        <span class="jc-name">${esc(jobName(j.job_type))}${j.current_item?`<span class="jc-item"> · ${esc(j.current_item)}</span>`:''}</span>
+        ${runBadge()}
+      </div>
+      <div class="progress"><i style="width:${p??0}%"></i></div>
+      <div class="jc-meta num">
+        <span>${fmtNum(cur)} / ${fmtNum(total)}</span>
+        ${p!=null?`<span>${p}%</span>`:''}
+        ${j.started_at?`<span data-elapsed="${j.started_at}" data-suffix="elapsed">${fmtDur(elapsed)} elapsed</span>`:''}
+      </div>
+    </div>`;}).join('');
+  const rrows = resolving.map(r=>
+    `<div class="winrow"><div class="w-main"><span class="w-label">${esc(r.label)}</span>
+      <span class="w-sub">resolving identity</span></div>
+      <span class="w-right">${badge('RESOLVING')}</span></div>`).join('');
+  return jrows + rrows;
+}
+function diagnosticsHtml(d){
+  const P = d.physical || {};
+  const rows = [];
+  rows.push(`<div class="dg-row"><span class="dg-name">Physical library</span>
+    <span class="dg-val">${DOT(P.status==='HEALTHY'?'':P.status==='FAILED'?'err':P.status?'warn':'off')} ${esc(P.status||'unknown')}</span>
+    <span class="dg-sub">${P.checked_at?fmtAgo(P.checked_at):'timestamp unavailable'}</span></div>`);
+  const runs = (d.sweeper && d.sweeper.last_runs) || [];
+  const lastSweep = runs.find(r=>r.status!=='RUNNING') || runs[0];
+  if (lastSweep) rows.push(`<div class="dg-row"><span class="dg-name">Last sweep</span>
+    <span class="dg-val">${esc(lastSweep.status)}</span>
+    <span class="dg-sub">${lastSweep.processed!=null?`${fmtNum(lastSweep.processed)} checked · `:''}${lastSweep.finished_at?fmtAgo(lastSweep.finished_at):fmtAgo(lastSweep.started_at)}</span></div>`);
+  const C = d.coverage;
+  if (C && C.logical_total) {
+    // Audit 2026-10-07: puntmoment-snapshot van een andere populatie —
+    // diagnostics, nooit live health. legacy_dead (meetfout) tonen we niet.
+    const ageLbl = C.age_s!=null ? fmtAgeLabel(C.age_s) : 'timestamp unavailable';
+    const stale = !C.age_s || C.age_s > 48*3600;
+    rows.push(`<div class="dg-row"><span class="dg-name">Coverage</span>
+      <span class="dg-val num">${fmtNum(C.managed)} / ${fmtNum(C.logical_total)}</span>
+      <span class="dg-sub">${stale?'stale snapshot':'snapshot'} · ${ageLbl} · not live health</span></div>`);
+    rows.push(`<div class="dg-row"><span class="dg-name">Legacy audit</span>
+      <span class="dg-val">outdated</span>
+      <span class="dg-sub">recount pending · not live health</span></div>`);
+  }
+  return `<div class="diaglist">${rows.join('')}</div>`;
+}
 function overviewHtml(d){
   const L = d.library;
-  const cause = d.issues.no_source ? `${d.issues.no_source} items need attention`
-    : L.identity_incomplete ? `${L.identity_incomplete} items identity incomplete`
-    : 'all managed items healthy';
+  // Rekenkundig sluitend: Ready + Issues + Pending = Total (pending wordt
+  // server-side als complement geleverd; hier alleen een guard).
+  const total = L.total||0, ready = L.ready||0, issues = L.no_source||0;
+  const pend = (L.pending != null) ? L.pending : Math.max(0, total - ready - issues);
   const HLABEL = {HEALTHY:'System healthy', DEGRADED:'Degraded', ATTENTION:'Attention',
     ERROR:'Error', HEALTHY_WITH_LEGACY_GAPS:'Healthy · legacy gaps',
     PROVIDER_WAIT:'Provider paused'};
-  const banner = badge(d.health, d.health==='HEALTHY'?'SUCCESS':d.health)
-    + `<span class="h">${HLABEL[d.health]||d.health}</span>`
-    + `<span class="muted" style="font-weight:400">— ${cause}</span>`
-    + ((d.ingest && d.ingest.provider && d.ingest.provider.blocked && d.ingest.provider.blocked.length)
-      ? `<span class="muted" style="font-weight:400"> · ingest: provider rate limited (${esc(d.ingest.provider.blocked.join(', '))}), retry in ${fmtIn(d.ingest.provider.retry_in_s||0)}, queue paused safely</span>`
-      : '');
-  // Primaire health-kaarten — rekenkundig sluitend:
-  // Ready + Issues + Pending = Total (resolver identities). Pending is het
-  // complement zodat de drie kaarten altijd optellen.
-  const pending = Math.max(0, L.total - L.ready - L.no_source);
-  const pendParts = [
-    L.provider_wait ? `provider wait ${L.provider_wait}` : '',
-    L.resolving ? `resolving ${L.resolving}` : '',
-    L.identity_incomplete ? `identity incomplete ${L.identity_incomplete}` : ''
-  ].filter(Boolean).join(' · ');
-  const readyPct = L.total ? (100 * L.ready / L.total).toFixed(1) : '–';
-  const kpilib = kpi('Ready', `${L.ready} / ${L.total}`, 'ok', `${readyPct}% resolver identities`)
-    + kpi('Issues', L.no_source, L.no_source ? 'err' : 'ok', 'NO_SOURCE · needs a source')
-    + kpi('Pending', pending, pending ? 'warn' : 'ok',
-      pending ? `${pendParts || 'waiting'} · transient, not failed` : 'nothing waiting');
-  let kpiauto = kpi('Active streams',d.playback.active,d.playback.active?'run':'')
-    + kpi('Candidate failures',d.provider.candidate_failures,'', '24h')
-    + kpi('Transient',d.provider.transient,d.provider.transient?'warn':'','24h')
-    + kpi('Recovered',(d.sweeper.last_runs||[]).reduce((a,r)=>a+(r.recovered||0),0),'ok','by sweeper');
-  const now = (d.now.resolving.length || d.now.jobs_running.length)
-    ? d.now.resolving.map(r=>card(esc(r.label),'Resolving',badge('RUNNING'))).join('')
-      + d.now.jobs_running.map(j=>card(esc(j.job_type)+(j.current_item?` — ${esc(j.current_item)}`:''),
-        `${j.progress_current??0} / ${j.progress_total??'?'} · ${pct(j)}%`,
-        `<div class="progress"><i style="width:${pct(j)}%"></i></div>`)).join('')
-    : `<div class="empty"><span class="e-ico">☾</span><span class="e-title">Idle</span>No active resolutions or jobs.</div>`;
-  const wins = d.recent_wins.length ? d.recent_wins.map(w=>
-    card(esc(w.label), `NO SOURCE → READY${w.file?`<div class="muted">${esc(w.file)}</div>`:''}`,
-      `${badge('RECOVERED')} <span class="muted">${ago(Date.now()/1000-w.ago_s)}</span>`)).join('')
-    : empty('No automatic recoveries','Nothing needed repair in the last 24h.');
-  const sw = (d.sweeper.last_runs||[])[0];
-  const sweeper = sw ? card('Health sweeper',
-    `${sw.processed??0} items processed, ${sw.recovered||0} recovered · ${ago(sw.finished_at||sw.started_at)}`,
-    badge(sw.status==='SUCCESS'?'COMPLETED':sw.status, sw.status==='SUCCESS'?'COMPLETED':'RETRYING'))
-    : empty('No sweeper runs','Runs appear here once the health sweeper cycles.');
+  const cause = issues ? `${fmtNum(issues)} items need a source`
+    : L.identity_incomplete ? `${fmtNum(L.identity_incomplete)} items identity incomplete`
+    : 'all managed items healthy';
+  const dotCls = d.health==='HEALTHY' ? '' : d.health==='ERROR' ? ' err' : ' warn';
+  const ingestNote = (d.ingest && d.ingest.provider && d.ingest.provider.blocked && d.ingest.provider.blocked.length)
+    ? ` · provider rate limited (${esc(d.ingest.provider.blocked.join(', '))}), retry in ${fmtIn(d.ingest.provider.retry_in_s||0)} — queue paused safely` : '';
+  let status = `<div class="statusline"><span class="st-dot ${dotCls}"></span>`
+    + `<b>${esc(HLABEL[d.health]||d.health)}</b>`
+    + `<span class="cause">· ${esc(cause)}${ingestNote}</span></div>`;
   const P = d.physical || {};
-  let banner2 = banner;
   if (P.status && P.status !== 'HEALTHY') {
     const cls = P.status === 'FAILED' ? 'ERROR' : 'DEGRADED';
-    banner2 = `<div class="banner ${cls}">${badge(cls==='ERROR'?'ERROR':'WARNING', cls==='ERROR'?'ERROR':'WARNING')}`
+    status = `<div class="banner ${cls}">${badge(cls==='ERROR'?'ERROR':'WARNING', cls==='ERROR'?'ERROR':'WARNING')}`
       + `<span class="h">Playback storage unavailable</span>`
-      + `<span class="muted" style="font-weight:400">— ${esc(P.status)} · ${esc(P.detail||'unknown error')}`
-      + `${P.last_healthy_at?` · last healthy: ${ago(P.last_healthy_at)}`:''}</span></div>`;
+      + `<span class="cause">— ${esc(P.status)} · ${esc(P.detail||'unknown error')}`
+      + `${P.last_healthy_at?` · last healthy ${fmtAgo(P.last_healthy_at)}`:''}</span></div>`;
   }
-  kpiauto += kpi('Physical library', P.status||'unknown',
-    P.status==='HEALTHY'?'ok':P.status==='FAILED'?'err':'warn',
-    P.checked_at?`checked ${ago(P.checked_at)}`:'');
-  const C = d.coverage;
-  if (C && C.logical_total) {
-    // Audit 2026-10-07: dit is een puntmoment-snapshot van een andere
-    // populatie, geen live library-health — daarom muted gelabeld als
-    // snapshot, en de legacy_dead-telling (meetfout) tonen we niet meer
-    // als actuele waarheid.
-    const stale = !C.age_s || C.age_s > 48*3600;
-    const asOf = C.age_s ? `${ago(C.age_s)} ago` : 'unknown time';
-    kpiauto += kpi('Coverage snapshot', `${C.managed} / ${C.logical_total}`, '',
-      `${stale ? 'STALE' : 'snapshot'} · as of ${asOf} · not live health`);
-    kpiauto += kpi('Legacy audit', 'outdated', '',
-      `last audit ${asOf} · recount pending`);
-  }
-  return {banner: banner2, kpilib, kpiauto, now, wins, sweeper};
+  const pctReady = total ? (100*ready/total).toFixed(1) : '–';
+  const health = `<div class="hc">
+    <div class="hc-top">
+      <div><span class="hc-title">Library health</span><span class="hc-pct num">${pctReady}%</span></div>
+      <div class="hc-sub num">${fmtNum(total)} resolver identities</div>
+    </div>
+    <div class="hc-bar" role="img" aria-label="${esc(`Ready ${ready}, issues ${issues}, pending ${pend} of ${total}`)}">${
+      total ? `<span class="s-ok" style="width:${(100*ready/total).toFixed(2)}%"></span>` +
+              `<span class="s-err" style="width:${(100*issues/total).toFixed(2)}%"></span>` +
+              `<span class="s-warn" style="width:${(100*pend/total).toFixed(2)}%"></span>` : ''}</div>
+    <div class="hc-stats">
+      <button class="hc-stat ok" data-nav="library:READY" title="Show READY items in the library">
+        <b class="num">${fmtNum(ready)}</b> Ready</button>
+      <button class="hc-stat err" data-nav="issues" title="Triage NO_SOURCE items">
+        <b class="num">${fmtNum(issues)}</b> Issues</button>
+      <button class="hc-stat warn" data-nav="library:PROVIDER_WAIT" title="Transient, not failed">
+        <b class="num">${fmtNum(pend)}</b> Pending</button>
+    </div>
+  </div>`;
+  const prov = d.provider || {};
+  const dash = v => (v==null || v===undefined) ? '—' : fmtNum(v);
+  const strip = `<div class="statstrip">
+    <div class="stat"><span class="s-l">Active streams</span><b class="num">${fmtNum((d.playback||{}).active||0)}</b></div>
+    <div class="stat"><span class="s-l">Candidate fails</span><b class="num">${dash(prov.candidate_failures)}</b><span class="s-s">24h</span></div>
+    <div class="stat"><span class="s-l">Transient</span><b class="num">${dash(prov.transient)}</b><span class="s-s">24h</span></div>
+    <div class="stat"><span class="s-l">Recovered</span><b class="num">${fmtNum(((d.sweeper||{}).last_runs||[]).reduce((a,r)=>a+(r.recovered||0),0))}</b><span class="s-s">by sweeper</span></div>
+  </div>`;
+  const active = activeNowHtml(d);
+  const wins = d.recent_wins.length ? `<div class="winlist">` + d.recent_wins.map(w=>{
+    const file = w.file ? String(w.file) : '';
+    const fname = file.split('/').pop();
+    return `<div class="winrow">
+      <div class="w-main"><span class="w-label">${esc(w.label)}</span>
+        <span class="w-sub">NO_SOURCE → READY${fname?` · <span class="w-file" title="${esc(file)}">${esc(fname)}</span>`:''}</span></div>
+      <span class="w-right">${badge('RECOVERED')} <span class="num">${fmtAgeLabel(w.ago_s)}</span></span>
+    </div>`;}).join('') + `</div>`
+    : `<div class="idleline">No automatic recoveries in the last 24h</div>`;
+  return {status, health, strip, active, wins, diag: diagnosticsHtml(d)};
 }
 /* ---------- activity ---------- */
 let actFilter='all', actPage=0;
@@ -516,7 +681,7 @@ function activityHtml(d){
     return `<div class="tl-row"><span class="tl-time">${t}</span>
       <span class="tl-ico" style="color:var(--${c.outcome==='FAILED'?'danger':c.outcome==='SUCCESS'?'success':'text-muted'})">${ico}</span>
       <div class="tl-main"><div class="tl-title"><span class="cat">${esc(c.op)}</span>${esc(c.item?.label||'?')}</div>
-      <div class="tl-sub">${esc(c.detail||'')}${c.candidate_count!=null?` · ${c.candidate_count} candidates`:''}${c.duration_s?` · ${c.duration_s}s`:''}</div>
+      <div class="tl-sub">${esc(c.detail||'')}${c.candidate_count!=null?` · ${c.candidate_count} candidates`:''}${c.duration_s?` · ${fmtDur(c.duration_s)}`:''}</div>
       ${c.rejects?rejectBar(c.rejects):''}</div>
       <span class="tl-right">${badge(st,st)}</span></div>`;}).join('') + `</div>`;
 }
@@ -541,7 +706,7 @@ function issuesHtml(d){
       <div class="iss-body">
         <div>${esc(i.label)} ${badge(sev,sev==='RETRYING'?'RETRYING':sev)}</div>
         <div class="muted" style="margin:2px 0">${esc(i.human)}</div>
-        ${i.candidate_count!=null?`<div class="muted num">${i.candidate_count} candidates · last attempt ${i.last_attempt_ago_s!=null?ago(Date.now()/1000-i.last_attempt_ago_s):''}${i.next_retry_in_s!=null?` · ${retry}`:''}</div>`:''}
+        ${i.candidate_count!=null?`<div class="muted num">${i.candidate_count} candidates · last attempt ${i.last_attempt_ago_s!=null?fmtAgeLabel(i.last_attempt_ago_s):''}${i.next_retry_in_s!=null?` · ${retry}`:''}</div>`:''}
         ${i.rejects?.length?rejectBar(Object.fromEntries(i.rejects.map(r=>[r.key,r.n]))):''}
         <details><summary>Details</summary><div style="margin-top:6px">
         <table><tr><th>Reason</th><th>Count</th><th>Group</th></tr>${
@@ -607,31 +772,48 @@ function renderLibrary(){
   $('#libcount').textContent = `${rows.length} of ${libCache.length}`;
 }
 /* ---------- jobs ---------- */
+function stateBadge(state){
+  if (state === 'RUNNING') return runBadge();
+  if (state === 'SUCCESS') return badge('COMPLETED','COMPLETED');
+  return badge(state, state);
+}
 function jobsHtml(d){
-  if (!d.jobs.length) return empty('No jobs yet','Health sweeps appear here while they run.');
+  if (!d.jobs.length && !(d.history||[]).length)
+    return empty('No jobs yet','Health sweeps appear here while they run.');
   const row = j=>{
-    const st = j.state==='SUCCESS'?'COMPLETED':j.state;
+    const st = j.state;
     const eligible = j.progress_total!=null && j.progress_total===0 && j.state!=='RUNNING';
-    return `<tr><td><div>${esc(j.job_type)}</div><div class="muted">${ago(j.last_run)}</div></td>
-      <td>${badge(st,st==='COMPLETED'?'COMPLETED':st==='RUNNING'?'RUNNING':'RETRYING')}</td>
-      <td style="min-width:180px">${eligible?'<span class="muted">0 items eligible</span>':
-        j.progress_total?`<div class="progress"><i style="width:${pct(j)}%"></i></div><span class="muted num">${j.progress_current??0} / ${j.progress_total}${j.current_item?` · ${esc(j.current_item)}`:''}</span>`:'–'}</td>
+    const total = j.progress_total;
+    const cur = Math.max(0, j.progress_current ?? j.processed ?? 0);
+    const prog = eligible ? '<span class="muted">0 items eligible</span>'
+      : (j.state==='RUNNING' && total)
+        ? `<div class="progress"><i style="width:${Math.min(100,Math.round(cur/total*100))}%"></i></div><span class="muted num">${fmtNum(cur)} / ${fmtNum(total)}${j.current_item?` · ${esc(j.current_item)}`:''}</span>`
+        : '–';
+    return `<tr><td>${esc(jobName(j.job_type))}<div class="muted">${fmtAgo(j.last_run)}</div></td>
+      <td>${stateBadge(st)}</td><td style="min-width:170px">${prog}</td>
       <td class="num">${j.processed??'–'}</td><td class="num">${j.changed??0}</td><td class="num">${j.recovered??0}</td></tr>`; };
+  const hrow = h=>{
+    // live elapsed alleen voor écht draaiende runs; terminal states zonder
+    // finished_at (bijv. INTERRUPTED bij restart) tonen geen nep-timer
+    const dur = h.finished_at ? fmtDur(h.finished_at - h.started_at)
+      : h.status === 'RUNNING'
+        ? `<span data-elapsed="${h.started_at}">${fmtDur(Math.max(0, Date.now()/1000 - h.started_at))}</span>`
+        : '–';
+    return `<tr><td>${esc(jobName(h.job_type))}</td><td class="num">${fmtAgo(h.started_at)}</td>
+      <td>${stateBadge(h.status)}</td><td class="num">${dur}</td>
+      <td class="num">${h.processed??'–'}</td><td class="num">${h.recovered??0}</td></tr>`; };
   return `<h2 class="sec">Jobs</h2><div class="tablewrap"><table>
     <thead><tr><th>Job</th><th>Status</th><th>Progress</th><th class="num">Processed</th><th class="num">Changed</th><th class="num">Recovered</th></tr></thead>
-    <tbody>${d.jobs.map(row).join('')}</tbody></table></div>
+    <tbody>${(d.jobs||[]).map(row).join('')}</tbody></table></div>
     <h2 class="sec">Run history</h2><div class="tablewrap"><table>
-    <thead><tr><th>Job</th><th>Started</th><th>Status</th><th>Duration</th><th class="num">Processed</th><th class="num">Recovered</th></tr></thead>
-    <tbody>${d.history.map(h=>`<tr><td>${esc(h.job_type)}</td><td>${ago(h.started_at)}</td>
-      <td>${badge(h.status,h.status==='SUCCESS'?'COMPLETED':h.status==='RUNNING'?'RUNNING':'RETRYING')}</td>
-      <td class="num">${h.finished_at?`${Math.round(h.finished_at-h.started_at)}s`:'…'}</td>
-      <td class="num">${h.processed??'–'}</td><td class="num">${h.recovered??0}</td></tr>`).join('')}</tbody></table></div>`;
+    <thead><tr><th>Job</th><th>Started</th><th>Status</th><th class="num">Duration</th><th class="num">Processed</th><th class="num">Recovered</th></tr></thead>
+    <tbody>${(d.history||[]).map(hrow).join('')}</tbody></table></div>`;
 }
 /* ---------- providers ---------- */
 function providersHtml(d){
   const rl = d.rate_limit
     ? `<div class="banner DEGRADED" style="margin-bottom:10px">${badge('DEGRADED','DEGRADED')}` +
-      `<span class="h">Provider rate limited</span><span class="muted" style="font-weight:400">— ${esc(d.rate_limit.human)}` +
+      `<span class="h">Provider rate limited</span><span class="cause">— ${esc(d.rate_limit.human)}` +
       ` · retry in <b class="num" data-retry-until="${Date.now()+d.rate_limit.retry_in_s*1000}">${fmtIn(d.rate_limit.retry_in_s)}</b>` +
       ` · <span class="muted">source: ${esc(d.rate_limit.retry_source||'backoff')}</span></span></div>`
     : '';
@@ -678,7 +860,7 @@ function ingestHtml(d){
   const banner = `<div class="banner ${st[1]==='SUCCESS'?'HEALTHY':st[1]==='INFO'?'':st[1]}" aria-live="polite">`
     + `${badge(st[0], st[1]==='SUCCESS'?'SUCCESS':st[1])}<span class="h">${esc(st[2])}</span>`
     + (prov.blocked && prov.blocked.length
-        ? `<span class="muted" style="font-weight:400">— ${esc(prov.blocked.join(', '))} rate limited · retry in <b class="num">${fmtIn(prov.retry_in_s||0)}</b> — <b>geen false NO_SOURCE</b>: jobs blijven bewaard en gaan automatisch verder</span>`
+        ? `<span class="cause">— ${esc(prov.blocked.join(', '))} rate limited · retry in <b class="num">${fmtIn(prov.retry_in_s||0)}</b> — <b>geen false NO_SOURCE</b>: jobs blijven bewaard en gaan automatisch verder</span>`
         : '')
     + `</div>`;
   const counts = d.counts_by_state||{};
@@ -703,7 +885,7 @@ function ingestHtml(d){
   };
   const recent = `<div class="panel"><h3>Catch-up policy</h3>
     <div class="muted">batch size <b class="num">${d.batch_size??1}</b> · reconcile every <b class="num">${Math.round((d.reconcile_interval_s||1200)/60)} min</b>
-    ${d.last_reconcile_at?` · last reconcile ${ago(d.last_reconcile_at)}`:''}</div>
+    ${d.last_reconcile_at?` · last reconcile ${fmtAgo(d.last_reconcile_at)}`:''}</div>
     <div class="muted" style="margin-top:4px">Provider 429 → queue pause + Retry-After/backoff. True no-match only after a normally completed search with zero usable candidates.</div></div>`;
   return banner + `<div class="grid kpis">${kpis}</div>${countsRow}
     <div class="grid cols" style="margin-top:var(--sp-3)">${arrCard('sonarr')}${arrCard('radarr')}</div>${recent}`;
@@ -763,9 +945,9 @@ function setLive(on){
 function refresh(sec){
   if(sec==='overview') apiKeep('/ops/dashboard', d=>{
     const h = overviewHtml(d);
-    paintInto('#healthbanner','hb',h.banner); paintInto('#kpilib','kl',h.kpilib);
-    paintInto('#kpiauto','ka',h.kpiauto); paintInto('#nowactive','na',h.now);
-    paintInto('#wins','wi',h.wins); paintInto('#sweeperbox','sw',h.sweeper);
+    paintInto('#healthbanner','hb',h.status); paintInto('#healthcluster','hh',h.health);
+    paintInto('#statstrip','st',h.strip); paintInto('#nowactive','na',h.active);
+    paintInto('#wins','wi',h.wins); paintInto('#diagnostics','dg',h.diag);
     const P = d.physical||{};
     $('#sb-phys').className = 'st-dot' + (P.status==='HEALTHY'?'':P.status==='FAILED'?' err':' warn');
     $('#sb-phystxt').textContent = P.status||'–';
@@ -822,9 +1004,31 @@ $('#acthours').onchange = ()=>{ actPage=0; loadActivity(); };
 $('#actprev').onclick = ()=>{ if(actPage>0){actPage--;loadActivity();} };
 $('#actnext').onclick = ()=>{ actPage++; loadActivity(); };
 $('#libq').oninput = renderLibrary; $('#libstatus').onchange = renderLibrary;
+/* health-cluster metrics zijn klikbaar en sturen je naar de juiste sectie */
+document.addEventListener('click', e=>{
+  const t = e.target.closest('[data-nav]');
+  if (!t) return;
+  const [sec, filter] = t.dataset.nav.split(':');
+  if (sec === 'library' && filter){
+    const sel = $('#libstatus');
+    if ([...sel.options].some(o=>o.value===filter || o.text===filter)) sel.value = filter;
+  }
+  const btn = document.querySelector(`#nav button[data-s="${sec}"]`);
+  if (btn) btn.click();
+});
 document.addEventListener('visibilitychange', ()=>{
   if (!document.hidden) for (const s of ['overview','issues','jobs','activity','library']) lastPoll[s]=0;
 });
+/* live elapsed-tickers: [data-elapsed] bevat epoch-start; ticks zonder refetch */
+setInterval(()=>{
+  if (document.hidden) return;
+  const now = Date.now()/1000;
+  document.querySelectorAll('[data-elapsed]').forEach(el=>{
+    const st = parseFloat(el.dataset.elapsed);
+    if (Number.isFinite(st))
+      el.textContent = fmtDur(Math.max(0, now - st)) + (el.dataset.suffix ? ' ' + el.dataset.suffix : '');
+  });
+}, 1000);
 setInterval(()=>{
   if (document.hidden) return;
   const sec = document.querySelector('section.on').id.replace('s-','');
