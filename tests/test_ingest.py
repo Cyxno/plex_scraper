@@ -794,7 +794,7 @@ async def test_completed_job_reactivates_when_wanted_again(
     assert fresh.attempts == 0 and fresh.completed_at is None
 
 
-def test_queue_invariants_audit_tool(ingest_settings, scorer, tmp_path):
+async def test_queue_invariants_audit_tool(ingest_settings, scorer, tmp_path):
     """De invariant-audit vangt echte violaties (dubbele identiteit, COMPLETED
     zonder levering, onbegrensde pogingen, onverklaarde staat)."""
     import sqlite3
@@ -805,8 +805,6 @@ def test_queue_invariants_audit_tool(ingest_settings, scorer, tmp_path):
     bridge2 = IngestBridge(engine, ingest_settings)
     # gebruik de store van bridge (tmp sqlite) — audit daarop
     db_path = ingest_settings.db_path
-    import asyncio
-
     async def seed():
         j = lanterns_job()
         await bridge.store.upsert_job(j)
@@ -821,7 +819,7 @@ def test_queue_invariants_audit_tool(ingest_settings, scorer, tmp_path):
         c.commit(); c.close()
         return j.id
 
-    jid = asyncio.get_event_loop().run_until_complete(seed())
+    jid = await seed()
     out = audit(db_path=db_path)
     invs = {v["inv"] for v in out["violations"]}
     assert not out["ok"]
