@@ -136,10 +136,10 @@ class Settings:
     ingest_delivery_probe_retries: int = 3
     ingest_delivery_probe_wait_s: float = 20.0
     sonarr_enabled: bool = False
-    sonarr_url: str = "http://192.168.1.2:7854"
+    sonarr_url: str = ""
     sonarr_api_key: str = ""
     radarr_enabled: bool = False
-    radarr_url: str = "http://192.168.1.2:7878"
+    radarr_url: str = ""
     radarr_api_key: str = ""
     ingest_webhook_token: str = ""                     # optioneel shared secret
     plex_container: str = "plex"
