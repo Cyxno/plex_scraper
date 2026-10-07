@@ -1,10 +1,14 @@
 # plex_scraper
 
+[![tests](https://github.com/Cyxno/plex_scraper/actions/workflows/test.yml/badge.svg)](https://github.com/Cyxno/plex_scraper/actions/workflows/test.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
+
 **Plex-first dynamic media resolver with stable library paths and disposable backing sources.**
 
 `plex_scraper` keeps the logical media identity and Plex-visible path stable while the backing source can be replaced when it degrades or disappears.
 
-> Current release line: **1.0.x**
+> Current release line: **1.0.x** · Current version: **1.0.4**
 
 ## What it does
 
@@ -53,6 +57,8 @@ docker compose up -d --build
 
 Without a TorBox token the project can run against the seeded demo provider for local testing.
 
+The default compose file is intentionally development-friendly and reads credentials from `.env`. For production, prefer secret files/Docker secrets and keep the control surfaces private.
+
 ### Unraid / FUSE
 
 The VFS bind source must live on a shared mount so the FUSE mount can propagate to Plex:
@@ -98,6 +104,14 @@ Keep it private; do not expose it directly to the public internet.
 ## Project status
 
 The original proof-of-concept has evolved into a production-oriented 1.0.x stack. Historical PoC reports remain in the repository as design/test records.
+
+## Project scope & affiliation
+
+This is an independent community project. It is not affiliated with, endorsed by, or maintained by Plex, TorBox, Torrentio, Sonarr or Radarr. Users are responsible for complying with the terms of the services they connect and with applicable law.
+
+## Contributing
+
+Bug reports and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). For security issues, follow [SECURITY.md](SECURITY.md) and do not post credentials or private infrastructure details in public issues.
 
 ## License
 
