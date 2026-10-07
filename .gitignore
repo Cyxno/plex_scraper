@@ -15,3 +15,12 @@ build/
 data/
 config/preferences.yaml
 config/testset.yaml
+secrets/
+*.pem
+*.key
+*.p12
+*.bak
+*.bak-*
+*.bak.*
+.coverage
+htmlcov/
