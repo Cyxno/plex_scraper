@@ -1,16 +1,15 @@
 # Ingest-hardening baseline — 2026-10-06 (Phase 0)
 
-Vastgelegd vóór mutaties. Backups: `/mnt/user/backups/ingest-hardening-20261006-1758/`
-(state.db + state.db.safe + sonarr/radarr/prowlarr config.xml).
+Vastgelegd vóór mutaties. **Publieke kopie: site-specifieke hostnamen, LAN-adressen en backup-locaties zijn geanonimiseerd.**
 
 ## Topologie
 
-- Unraid-host `homeserver` (192.168.1.2, ssh-alias `homelab`).
+- Unraid-host `<unraid-host>` (`<LAN-IP>`).
 - Code: `/workspace/plex_scraper` (git main @ 90fca3d, clean), image `plex-scraper:local`.
 - `plex-scraper-core`: supervisor-roles resolver (8282→18282), scraper (8283→18283), web/cockpit (8285).
   - Env: SWEEPER_ENABLED=true, SWEEPER_SHADOW_MODE=false, SWEEPER_ITEMS_PER_HOUR=200, JIT_ENABLED=true.
   - Mounts: /config, /db.sqlite, torbox secret, /data, docker.sock. **Geen** symlink-tree en **geen** /mnt/remote/nzbdav.
-- `plex-scraper-vfs`: twee vfs-roles: FUSE `/mnt/cache/appdata/plex-scraper/vfs` (primair) en `/mnt/remote/nzbdav` (rehydrate), beide RESOLVER_URL=http://192.168.1.2:18282.
+- `plex-scraper-vfs`: twee vfs-roles: FUSE `/mnt/cache/appdata/plex-scraper/vfs` (primair) en `/mnt/remote/nzbdav` (rehydrate), beide RESOLVER_URL=http://<LAN-IP>:18282.
 - Plex: `/symlinks` (RO) + `/mnt/remote/nzbdav` (RO) + `/media/plex-scraper` (RO). Plex-namespace is autoritatief (sentinel via docker exec, python3 aanwezig).
 - Sonarr: host-poort **7854** (container 8989), rootfolder `/media` = host `/mnt/vm_storage/symlinks/TV Shows` (RW).
 - Radarr: 7878, rootfolder idem `/media-movies` → `/mnt/vm_storage/symlinks/Movies`.
@@ -43,7 +42,7 @@ Semantische fout: 429 = provider onbeschikbaar, NIET "geen bron". Daarnaast: leg
 - Radarr: **27 monitored missing movies** (o.a. Worldbreaker). Health-errors: InfiniDysk DC faalt (nog ENABLED in Radarr), decypharr remote-path-mapping `/mnt/debrid/decypharr_downloads` mist in container.
 - Prowlarr: 5 enabled indexers (LimeTorrents, NZBGeek, Spotweb, TPB, YTS); health alleen AllowedHosts-warning.
 - Download clients: Sonarr decypharr qBit (8282, cat `sonarr:Default`) + InfiniDysk SAB (disabled). Radarr decypharr qBit (cat `radarr:Default`) + **InfiniDysk SAB ENABLED**.
-- Remote path mapping: alleen Sonarr (`192.168.1.2: /mnt/debrid/decypharr_downloads/ → /mnt/debrid/decypharr/`). Radarr: geen.
+- Remote path mapping: alleen Sonarr (`<LAN-IP>: /mnt/debrid/decypharr_downloads/ → /mnt/debrid/decypharr/`). Radarr: geen.
 - decypharr-layout: `/mnt/cache/appdata/decypharr/mnt/debrid/decypharr/{__all__,__bad__,nzbs,torbox,torrents}` — arr-imports verwachten `sonarr:Default`-paden die niet bestaan → E2E-import NIET bewezen.
 - Sonarr series 58 path = `/media/Lanterns` (zonder jaar) — bridge moet de arr-seriepad volgen, niet gokken.
 
