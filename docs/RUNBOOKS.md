@@ -29,8 +29,8 @@ Torrentio weer antwoordt; PROVIDER_WAIT-jobs hervatten automatisch.
 
 **Diagnose**:
 ```
-curl -s http://192.168.1.2:9696/api/v3/health -H "X-Api-Key: $(cat /mnt/cache/appdata/plex-scraper/secret/radarr_key)"
-curl -s http://192.168.1.2:7854/api/v3/health -H "X-Api-Key: $(cat /mnt/cache/appdata/plex-scraper/secret/sonarr_key)"
+curl -s http://127.0.0.1:9696/api/v3/health -H "X-Api-Key: $(cat /mnt/cache/appdata/plex-scraper/secret/radarr_key)"
+curl -s http://127.0.0.1:7854/api/v3/health -H "X-Api-Key: $(cat /mnt/cache/appdata/plex-scraper/secret/sonarr_key)"
 ```
 
 **Actie**: Prowlarr app-sync-URL's controleren (moeten host-gateway-adressen
@@ -155,7 +155,7 @@ docker exec sonarr sh -c 'head -c 16 "$(readlink -f /media/<Show>/Season N/<file
 **Actie**: READ_FAIL met "Socket not connected" → mount stale → arr-herstart
 (`docker restart sonarr radarr`). Anders: één rescan forceren:
 ```
-curl -s -X POST http://192.168.1.2:7854/api/v3/command -H "X-Api-Key: $(cat /mnt/cache/appdata/plex-scraper/secret/sonarr_key)" -H 'Content-Type: application/json' -d '{"name":"RescanSeries","seriesId":<id>}'
+curl -s -X POST http://127.0.0.1:7854/api/v3/command -H "X-Api-Key: $(cat /mnt/cache/appdata/plex-scraper/secret/sonarr_key)" -H 'Content-Type: application/json' -d '{"name":"RescanSeries","seriesId":<id>}'
 ```
 
 **Valideer**: `hasFile: true` op de episode/movie; job COMPLETED.
