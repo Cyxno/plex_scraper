@@ -380,7 +380,8 @@ class JitController:
                 await self.resolver._evt("jit_candidate_probe", item=item,
                                          hash=cand.info_hash, name=cand.torrent_name,
                                          mbit=probe["mbit"], ttfb_s=probe.get("ttfb_s"),
-                                         relation=relation)
+                                         relation=relation, file_id=probe.get("file_id"),
+                                         file_size=probe.get("file_size"))
                 # POLICY-PASS early-exit: bij SEVERELY_DEGRADED current is de
                 # eerste geverifieerde same/minor-class candidate die
                 # ≥ required én duidelijk beter is direct de winnaar
@@ -529,28 +530,78 @@ class JitController:
                                      error=repr(exc)[:100])
 
     async def _probe_by_hash(self, item, cand) -> dict | None:
-        """FASE 9-probe op een kandidaat zonder hem te activeren."""
+        """FASE 9-probe op een kandidaat zonder hem te activeren.
+
+        File-selectie volgt de resolve/validatie-flow (provider.pick_file:
+        S/E-hint, video-extensie + minimumgrootte, grootste videofile als
+        fallback). Een scraper-fileIdx is een index in de eigen telling van
+        de scraper en wordt NOOIT 1-op-1 als provider-file-id gebruikt —
+        bij TorBox is id 0 vaak een NFO-sidecar (incident 2026-10-07,
+        Lanterns S01E08: 3/3 same-class kandidaten vielen weg op HTTP 416
+        omdat de probe-range uit de torrent-totaalgrootte tegen die sidecar
+        werd gevraagd). Probe-offsets worden daarom op de GEKOZEN file
+        berekend en geclampt binnen de file-grenzen."""
         try:
             torrent = await self.resolver.provider.ensure_torrent(
                 src_info_hash(cand), cand.torrent_name)
-            choice = None
-            if cand.file_index is not None and cand.file_index in torrent.files:
-                choice = (cand.file_index, torrent.files[cand.file_index])
-            elif torrent.files:
-                choice = self.resolver.provider.pick_file(torrent, cand.file_name) \
-                    if hasattr(self.resolver.provider, "pick_file") \
-                    else next(iter(torrent.files.items()))
-            if choice is None:
+            chosen = None
+            if torrent.files:
+                if hasattr(self.resolver.provider, "pick_file"):
+                    chosen = self.resolver.provider.pick_file(
+                        torrent, cand.file_name or cand.torrent_name)
+                if chosen is None:
+                    # providers zonder pick_file: grootste bestand als beste
+                    # media-kandidaat (never-smaller dan het video-idee)
+                    chosen = max(torrent.files.items(),
+                                 key=lambda kv: int((kv[1] or {}).get("size") or 0))
+            if chosen is None:
+                await self.resolver._evt("jit_probe_file_unusable", item=item,
+                                         hash=src_info_hash(cand),
+                                         reason="torrent zonder bestanden")
                 return None
-            fid = choice[0]
+            fid, meta = chosen
+            fname = str((meta or {}).get("name") or "")
+            fsize = int((meta or {}).get("size") or 0)
+            if not _looks_like_media_file(fname):
+                # sidecars (NFO/SRR/jpg/...) zijn nooit een geldige mediafile
+                await self.resolver._evt("jit_probe_file_unusable", item=item,
+                                         hash=src_info_hash(cand), file_id=fid,
+                                         file_name=fname[:90],
+                                         reason="gekozen file is geen videofile")
+                return None
             url = await self.resolver.provider.get_stream_url(torrent.torrent_id, fid)
-            out = []
-            for off in (0, max(0, int(cand.size or MB) // 2)):
+            # samples: 0 en het midden van de GEKOZEN file — cand.size is de
+            # torrent-totaalgrootte en zegt niets over díe file; clamp binnen
+            # de file-grenzen zodat een range nooit voorbij EOF kan
+            mid = max(0, min(fsize // 2, fsize - MB)) if fsize > MB else 0
+            offsets = sorted({0, mid})
+            await self.resolver._evt("jit_probe_file_selected", item=item,
+                                     hash=src_info_hash(cand), file_id=fid,
+                                     file_name=fname[:90], file_size=fsize,
+                                     offsets=offsets)
+            samples: list[float] = []
+            failures: list[str] = []
+            for off in offsets:
                 t0 = time.monotonic()
-                data = await self.resolver.provider.read_range(url, off, MB)
+                try:
+                    data = await self.resolver.provider.read_range(url, off, MB)
+                except Exception as exc:                # noqa: BLE001
+                    failures.append(f"offset {off}: {repr(exc)[:80]}")
+                    continue
                 dt = max(time.monotonic() - t0, 1e-6)
-                out.append(len(data) * 8 / 1e6 / dt)
-            return {"mbit": round(min(out), 1), "ttfb_s": None}
+                samples.append(len(data) * 8 / 1e6 / dt)
+            if not samples:
+                await self.resolver._evt("jit_candidate_probe_error", item=item,
+                                         hash=src_info_hash(cand), file_id=fid,
+                                         file_name=fname[:90],
+                                         error="; ".join(failures)[:160])
+                return None
+            if failures:
+                await self.resolver._evt("jit_probe_sample_degraded", item=item,
+                                         hash=src_info_hash(cand),
+                                         failures="; ".join(failures)[:160])
+            return {"mbit": round(min(samples), 1), "ttfb_s": None,
+                    "file_id": fid, "file_size": fsize}
         except Exception as exc:                        # noqa: BLE001
             await self.resolver._evt("jit_candidate_probe_error", item=item,
                                      hash=src_info_hash(cand), error=repr(exc)[:100])
@@ -558,6 +609,14 @@ class JitController:
 
 
 MB = 1048576
+
+# Spiegel van TorboxProvider.VIDEO_EXTS — jit is provider-vrij; deze lokale
+# kopie is de backstop zodat een probe nooit tegen een sidecar plaatsvindt.
+_MEDIA_EXTS = (".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov", ".mpg", ".webm")
+
+
+def _looks_like_media_file(name) -> bool:
+    return str(name or "").lower().endswith(_MEDIA_EXTS)
 
 
 def src_info_hash(obj):

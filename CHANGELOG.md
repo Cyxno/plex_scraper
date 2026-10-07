@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.0.3 — 2026-10-07 (JIT failover file-selectie-fix)
+
+### JIT-probe file-selectie (root cause van de valse failover-leegte)
+- jit.py `_probe_by_hash`: gebruikte torrentio's `fileIdx` rechtstreeks als
+  TorBox-file-id. Bij multi-file torrents is TorBox id 0 vaak een NFO-sidecar
+  (Lanterns S01E08 FLUX/Kitsune: id 0 = 1.467 B NFO, id 2 = 6,55 GB video) —
+  de probe vroeg `cand.size // 2` (torrent-totaal) aan die sidecar en kreeg
+  HTTP 416; 3/3 same-class kandidaten vielen weg → vals
+  `jit_no_equivalent_source {rejected_quality: 0}` tijdens playback-stalls.
+- Nu: file-selectie via provider.pick_file (S/E-hint, video-extensie +
+  minimumgrootte, grootste videofile als fallback) — identiek aan de
+  resolve/validatie-flow; scraper-fileIdx wordt nooit meer als provider-id
+  gebruikt; sidecar-only torrents worden geweigerd (`jit_probe_file_unusable`).
+- Probe-offsets op de GEKOZEN file berekend en geclampt binnen de
+  file-grenzen; één falende sample degradeert de probe i.p.v. haar weg te
+  gooien; nieuwe events: `jit_probe_file_selected` (file-id/-naam/-grootte,
+  offsets), `jit_probe_file_unusable`, `jit_probe_sample_degraded`, en
+  verrijkte `jit_candidate_probe`/`jit_candidate_probe_error`.
+
+### Tests
+- test_jit_probe_file_selection.py: incident-reproductie (NFO op id 0),
+  fileIdx-mismatch, sidecar-only, single-file, offset-clamp, partial-failure,
+  en de Lanterns-top-3 end-to-end (geen vals `no_equivalent_source` meer);
+  structuur-guard dat `_probe_by_hash` geen `file_index` meer raakt.
+
 ## 1.0.2 — 2026-10-07 (cockpit UI/UX-overhaul + job-progress-fix)
 
 ### Data-bugs (root causes gefixt)
