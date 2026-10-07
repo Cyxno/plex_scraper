@@ -57,9 +57,6 @@ services:
     env_file: .env
     environment:
       SCRAPER_BIND: 0.0.0.0:8283
-      TORBOX_API_TOKEN_FILE: /run/secrets/torbox_key
-    secrets:
-      - torbox_key
     ports:
       - "127.0.0.1:18283:8283"
     restart: unless-stopped
@@ -82,6 +79,3 @@ services:
       - resolver
     restart: unless-stopped
 
-secrets:
-  torbox_key:
-    file: ./secrets/torbox_key
