@@ -215,14 +215,18 @@ def create_ops_routes(app, resolver) -> APIRouter:
         try:
             with open("/data/coverage/latest.json") as fh:
                 coverage = json.load(fh)
+            # stale-marker: dit is een puntmoment-snapshot van een
+            # bestandsscan, geen live teller (audit 2026-10-07)
+            ts = coverage.get("timestamp")
+            if ts:
+                coverage["age_s"] = max(0, int(time.time() - float(ts)))
         except Exception:
             coverage = None
-        if coverage and coverage.get("legacy_dead", 0) > 0:
-            health = "DEGRADED"
-        elif coverage and coverage.get("legacy_working", 0) > 0 \
-                and health in ("HEALTHY", "ATTENTION") and not no_source:
-            # Phase 40: ingest/runtime gezond, alleen werkend legacy-residu
-            health = "HEALTHY_WITH_LEGACY_GAPS"
+        # Audit 2026-10-07: coverage/latest.json is een puntmoment-snapshot
+        # waarvan de legacy_dead-telling grotendeels als meetfout (te korte
+        # FUSE-read-timeouts) is achterhaald. De snapshot mag de live
+        # health dus niet meer degraderen; hij gaat uitsluitend als
+        # gelabelde snapshot mee in de payload (coverage-kaart cockpit).
         # Phase 36-42: ingest als first-class block + health-semantiek
         ingest_block = None
         bridge = getattr(app.state, "ingest", None)

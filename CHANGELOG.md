@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.1 — 2026-10-07 (healthcheck-fix + cockpit KPI-audit)
+
+### Healthcheck (na VFS-unhealthy-events)
+- Dockerfile HEALTHCHECK: interval 30s→60s, timeout 10s→60s. De 10s-timeout
+  was korter dan een koude FUSE-stat op het nzbdav-mount en gaf onterecht
+  `container_unhealthy`. Sinds de recreate met 60s/60s: geen unhealthy-events
+  meer, alle probes exit 0 (`vfs`+`nzbdav` beide "mounted").
+
+### Cockpit-KPI's (audit 2026-10-07)
+- ops.py: coverage/latest.json (puntmoment-snapshot) degradeert de live
+  health niet meer; hij gaat uitsluitend gelabeld (incl. `age_s`) mee in de
+  payload. Einde van de foutieve DEGRADED/HEALTHY_WITH_LEGACY_GAPS-path.
+- cockpit.html: primaire kaarten Ready / Issues / Pending, rekenkundig
+  sluitend (Ready + Issues + Pending = Total). Coverage-kaart gemuteerd als
+  "Coverage snapshot" (STALE >48u, "not live health") plus "Legacy audit:
+  outdated"; de onterechte "123 dead legacy · 0 working"-regel is verwijderd.
+
 ## 1.0.0 — 2026-10-07 (arr-authoritative ingest — eerste productie-release)
 
 ### Arr-authoritative ingest (nieuw)

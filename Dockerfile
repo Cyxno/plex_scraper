@@ -28,5 +28,5 @@ ENV PYTHONPATH=/app/src \
 ENTRYPOINT ["python", "-m", "plex_scraper.cli"]
 
 # Container healthcheck: alle rollen in deze container moeten reageren.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=60s --timeout=60s --start-period=30s --retries=3 \
   CMD python -m plex_scraper.roles.healthcheck || exit 1

@@ -432,10 +432,7 @@ function closeModal(){ $('#modal').style.display = 'none'; }
 /* ---------- overview ---------- */
 function overviewHtml(d){
   const L = d.library;
-  const cov = d.coverage;
-  const cause = (cov && cov.legacy_dead > 0)
-    ? `${cov.legacy_dead} legacy media items are unavailable`
-    : d.issues.no_source ? `${d.issues.no_source} items need attention`
+  const cause = d.issues.no_source ? `${d.issues.no_source} items need attention`
     : L.identity_incomplete ? `${L.identity_incomplete} items identity incomplete`
     : 'all managed items healthy';
   const HLABEL = {HEALTHY:'System healthy', DEGRADED:'Degraded', ATTENTION:'Attention',
@@ -447,11 +444,20 @@ function overviewHtml(d){
     + ((d.ingest && d.ingest.provider && d.ingest.provider.blocked && d.ingest.provider.blocked.length)
       ? `<span class="muted" style="font-weight:400"> · ingest: provider rate limited (${esc(d.ingest.provider.blocked.join(', '))}), retry in ${fmtIn(d.ingest.provider.retry_in_s||0)}, queue paused safely</span>`
       : '');
-  const kpilib = kpi('Ready',L.ready,'ok',`${L.total} total`)
-    + kpi('Resolving',L.resolving,L.resolving?'run':'')
-    + kpi('Provider wait',L.provider_wait||0,L.provider_wait?'warn':'','not failed')
-    + kpi('Issues',L.no_source,L.no_source?'err':'ok')
-    + kpi('Identity incomplete',L.identity_incomplete,L.identity_incomplete?'warn':'ok');
+  // Primaire health-kaarten — rekenkundig sluitend:
+  // Ready + Issues + Pending = Total (resolver identities). Pending is het
+  // complement zodat de drie kaarten altijd optellen.
+  const pending = Math.max(0, L.total - L.ready - L.no_source);
+  const pendParts = [
+    L.provider_wait ? `provider wait ${L.provider_wait}` : '',
+    L.resolving ? `resolving ${L.resolving}` : '',
+    L.identity_incomplete ? `identity incomplete ${L.identity_incomplete}` : ''
+  ].filter(Boolean).join(' · ');
+  const readyPct = L.total ? (100 * L.ready / L.total).toFixed(1) : '–';
+  const kpilib = kpi('Ready', `${L.ready} / ${L.total}`, 'ok', `${readyPct}% resolver identities`)
+    + kpi('Issues', L.no_source, L.no_source ? 'err' : 'ok', 'NO_SOURCE · needs a source')
+    + kpi('Pending', pending, pending ? 'warn' : 'ok',
+      pending ? `${pendParts || 'waiting'} · transient, not failed` : 'nothing waiting');
   let kpiauto = kpi('Active streams',d.playback.active,d.playback.active?'run':'')
     + kpi('Candidate failures',d.provider.candidate_failures,'', '24h')
     + kpi('Transient',d.provider.transient,d.provider.transient?'warn':'','24h')
@@ -485,11 +491,16 @@ function overviewHtml(d){
     P.checked_at?`checked ${ago(P.checked_at)}`:'');
   const C = d.coverage;
   if (C && C.logical_total) {
-    kpiauto += kpi(`${C.managed} / ${C.logical_total}`,
-      `library coverage · ${C.coverage_pct}%`,
-      C.legacy_dead > 0 ? 'warn' : 'ok',
-      C.legacy_dead > 0 ? `${C.legacy_dead} dead legacy · ${C.legacy_working||0} working`
-                        : `${C.legacy_working||0} working legacy`);
+    // Audit 2026-10-07: dit is een puntmoment-snapshot van een andere
+    // populatie, geen live library-health — daarom muted gelabeld als
+    // snapshot, en de legacy_dead-telling (meetfout) tonen we niet meer
+    // als actuele waarheid.
+    const stale = !C.age_s || C.age_s > 48*3600;
+    const asOf = C.age_s ? `${ago(C.age_s)} ago` : 'unknown time';
+    kpiauto += kpi('Coverage snapshot', `${C.managed} / ${C.logical_total}`, '',
+      `${stale ? 'STALE' : 'snapshot'} · as of ${asOf} · not live health`);
+    kpiauto += kpi('Legacy audit', 'outdated', '',
+      `last audit ${asOf} · recount pending`);
   }
   return {banner: banner2, kpilib, kpiauto, now, wins, sweeper};
 }
