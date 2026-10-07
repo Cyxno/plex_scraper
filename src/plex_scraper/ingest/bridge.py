@@ -79,6 +79,7 @@ class IngestBridge:
         self._circuit_drain_task: asyncio.Task | None = None
         self._last_reconcile_at = 0.0
         self._reconciling = asyncio.Lock()
+        self.config_issues: list[str] = []
         self.metrics = {
             "enqueued": 0, "completed": 0, "failed_final": 0,
             "provider_waits": 0, "reconciles": 0,
@@ -99,9 +100,41 @@ class IngestBridge:
             pass
 
     # ----------------------------------------------------------- lifecycle
+    def _validate_config(self) -> list[str]:
+        """Phase 34: half-broken config start NIET stilletjes — elke bevinding
+        wordt gelogd én in status() gerapporteerd (config_issues)."""
+        issues: list[str] = []
+        s = self.s
+        if getattr(s, "sonarr_enabled", False) and \
+                not getattr(s, "sonarr_api_key", ""):
+            issues.append("SONARR_ENABLED maar geen API-key (SONARR_API_KEY_FILE)")
+        if getattr(s, "radarr_enabled", False) and \
+                not getattr(s, "radarr_api_key", ""):
+            issues.append("RADARR_ENABLED maar geen API-key (RADARR_API_KEY_FILE)")
+        for name, url in (("sonarr", getattr(s, "sonarr_url", "")),
+                          ("radarr", getattr(s, "radarr_url", ""))):
+            if getattr(s, f"{name}_enabled", False) and \
+                    not str(url).startswith("http"):
+                issues.append(f"{name.upper()}_URL ongeldig: {url!r}")
+        root = getattr(s, "symlink_root", "")
+        if not os.path.isdir(root):
+            issues.append(f"SYMLINK_ROOT bestaat niet: {root!r}")
+        elif not os.access(root, os.W_OK):
+            issues.append(f"SYMLINK_ROOT niet schrijfbaar: {root!r}")
+        if not getattr(self.s, "ingest_webhook_token", ""):
+            issues.append("INGEST_WEBHOOK_TOKEN leeg — webhook-endpoints "
+                          "zonder auth (alleen acceptabel op vertrouwd LAN)")
+        if not os.path.exists("/var/run/docker.sock"):
+            issues.append("docker.sock ontbreekt — plex-probes/scans onmogelijk")
+        for i in issues:
+            event("ingest_config_issue", issue=i)
+        self.config_issues = issues
+        return issues
+
     def start(self) -> None:
         if self._running:
             return
+        self._validate_config()
         self._running = True
         loop = asyncio.get_event_loop()
         loop.create_task(self._recover_on_start())
@@ -762,14 +795,41 @@ class IngestBridge:
     # ------------------------------------------------------------ webhooks
     _GRAB_EVENTS = frozenset({"Grab", "Download", "Test"})
 
-    async def handle_webhook(self, source: str, payload: dict) -> dict:
-        """Phase 12/13: webhook-event → idempotente enqueue.
+    async def _revalidate_sonarr_episode(self, series_id, episode_id) -> dict | None:
+        """Phase 27: webhook = trigger, arr-API = authority. Haalt de episode
+        authoritief op (monitored, identity, pad) i.p.v. payload te vertrouwen."""
+        if self.sonarr is None or not episode_id:
+            return None
+        try:
+            ep = await self.sonarr.episode(int(episode_id))
+        except (ArrUnavailable, ValueError, TypeError):
+            return None
+        if not ep.get("monitored"):
+            return None
+        try:
+            series = await self.sonarr.series(int(series_id or ep.get("seriesId")))
+        except (ArrUnavailable, ValueError, TypeError):
+            series = {}
+        return {"ep": ep, "series": series or {}}
 
-        Grab/Download-events worden bewust NIET geënqueue'd zolang er nog een
-        legacy download-client (decypharr) actief kan grijpen — dat is de
-        dual-ingest-hazard (Phase 22). De reconcile-loop is de authority voor
-        wanted-state; webhooks versnellen identity-bearing events. Zodra de
-        legacy client uit de ingest-pad is, kan dit omgezet worden.
+    async def _revalidate_radarr_movie(self, movie_id) -> dict | None:
+        if self.radarr is None or not movie_id:
+            return None
+        try:
+            mv = await self.radarr.movie(int(movie_id))
+        except (ArrUnavailable, ValueError, TypeError):
+            return None
+        return {"mv": mv} if mv.get("monitored") else None
+
+    async def handle_webhook(self, source: str, payload: dict) -> dict:
+        """Phase 12/13/26/27: webhook-event → idempotente enqueue.
+
+        * payload is alléén een trigger: identiteit/monitored wordt via de
+          arr-API gevalideerd (Phase 27) — titel/IMDb uit de payload wordt
+          niet vertrouwd;
+        * Grab/Download/Test worden bewust genegeerd zolang er een legacy
+          download-client kan grijpen (single-ingest policy);
+        * token-auth zit op de endpoint-laag (Phase 26).
         """
         ev = (payload.get("eventType") or "").strip()
         if not ev:
@@ -781,56 +841,63 @@ class IngestBridge:
         out: dict = {"event": ev, "enqueued": 0, "ignored": None}
         if source == "sonarr":
             series = payload.get("series") or {}
-            episodes = payload.get("episodes") or [{}]
+            episodes = payload.get("episodes") or []
             for ep in episodes:
-                if not ep:
+                reval = await self._revalidate_sonarr_episode(
+                    series.get("id"), ep.get("id") if isinstance(ep, dict) else None)
+                if reval is None:
+                    out["ignored"] = "identiteit niet gevalideerd via arr-API"
                     continue
+                e, s = reval["ep"], reval["series"]
                 job = IngestJob(
                     source="sonarr",
-                    arr_item_id=f"{series.get('id')}:{ep.get('id')}",
+                    arr_item_id=f"{s.get('id')}:{e.get('id')}",
                     kind="episode",
                     dedupe_key=IngestJob.tv_dedupe_key(
-                        series.get("imdbId"), series.get("tvdbId"),
-                        ep.get("seasonNumber") or 0,
-                        ep.get("episodeNumber") or 0),
-                    title=ep.get("title") or "",
-                    series=series.get("title"),
-                    season=ep.get("seasonNumber"),
-                    episode=ep.get("episodeNumber"),
-                    year=series.get("year"),
-                    show_imdb_id=series.get("imdbId"),
-                    show_tvdb_id=str(series.get("tvdbId")) if series.get("tvdbId") else None,
-                    show_tmdb_id=str(series.get("tmdbId")) if series.get("tmdbId") else None,
-                    arr_path=series.get("path"),
+                        s.get("imdbId"), s.get("tvdbId"),
+                        e.get("seasonNumber") or 0, e.get("episodeNumber") or 0),
+                    title=e.get("title") or "",
+                    series=s.get("title"),
+                    season=e.get("seasonNumber"),
+                    episode=e.get("episodeNumber"),
+                    year=s.get("year"),
+                    show_imdb_id=s.get("imdbId"),
+                    show_tvdb_id=str(s.get("tvdbId")) if s.get("tvdbId") else None,
+                    show_tmdb_id=str(s.get("tmdbId")) if s.get("tmdbId") else None,
+                    arr_path=s.get("path"),
+                    air_date_utc=e.get("airDateUtc"),
                 )
-                if ":None" not in job.arr_item_id and job.show_imdb_id:
+                if job.show_imdb_id or job.show_tvdb_id:
                     _, created = await self.enqueue(job, "webhook")
                     if created:
                         out["enqueued"] += 1
                 else:
-                    out["ignored"] = "incomplete identity in webhook payload"
+                    out["ignored"] = "incomplete identity (arr-API)"
         elif source == "radarr":
             movie = payload.get("movie") or payload.get("remoteMovie") or {}
-            if movie.get("id") or movie.get("tmdbId"):
+            reval = await self._revalidate_radarr_movie(movie.get("id"))
+            if reval is None:
+                out["ignored"] = "identiteit niet gevalideerd via arr-API"
+            else:
+                mv = reval["mv"]
                 job = IngestJob(
                     source="radarr",
-                    arr_item_id=f"{movie.get('id')}",
+                    arr_item_id=f"{mv.get('id')}",
                     kind="movie",
                     dedupe_key=IngestJob.movie_dedupe_key(
-                        movie.get("imdbId"),
-                        str(movie.get("tmdbId") or "")),
-                    title=movie.get("title") or "",
-                    year=movie.get("year"),
-                    imdb_id=movie.get("imdbId"),
-                    tmdb_id=str(movie.get("tmdbId") or ""),
-                    arr_path=movie.get("path"),
+                        mv.get("imdbId"), str(mv.get("tmdbId") or "")),
+                    title=mv.get("title") or "",
+                    year=mv.get("year"),
+                    imdb_id=mv.get("imdbId"),
+                    tmdb_id=str(mv.get("tmdbId") or ""),
+                    arr_path=mv.get("path"),
                 )
                 if job.imdb_id or job.tmdb_id:
                     _, created = await self.enqueue(job, "webhook")
                     if created:
                         out["enqueued"] += 1
                 else:
-                    out["ignored"] = "incomplete identity in webhook payload"
+                    out["ignored"] = "incomplete identity (arr-API)"
         else:
             return {"ignored": f"unknown source {source}"}
         return out
@@ -859,4 +926,75 @@ class IngestBridge:
                          "state": snap.get("overall"),
                          "retry_in_s": round(next_retry, 1)},
             "metrics": dict(self.metrics),
+            "config_issues": list(self.config_issues),
         }
+
+    async def canary(self) -> dict:
+        """Phase 12: synthetische ketencheck — geen downloads, geen echte
+        grabs. Controleert elke schakel die een ingest nodig heeft."""
+        out: dict = {"ts": time.time(), "checks": {}}
+        ok = True
+        for name, client in (("sonarr", self.sonarr), ("radarr", self.radarr)):
+            if client is None:
+                out["checks"][name] = {"ok": False, "why": "not configured"}
+                ok = False
+                continue
+            try:
+                await client.status_ok()
+                out["checks"][name] = {"ok": True}
+            except Exception as exc:               # noqa: BLE001
+                out["checks"][name] = {"ok": False, "why": repr(exc)[:100]}
+                ok = False
+        # queue schrijfbaar (probe-rij in tx, daarna weg)
+        try:
+            probe = IngestJob(
+                source="sonarr", arr_item_id="canary:0", kind="episode",
+                dedupe_key="canary:ingest-probe", title="__canary__",
+                enqueue_reason="canary")
+            jid, created = await self.store.upsert_job(probe)
+            row = await self.store.get_job(jid)
+            writable = row is not None
+            await self.store.delete_job(jid)
+            out["checks"]["queue_writable"] = {"ok": writable}
+            ok = ok and writable
+        except Exception as exc:                   # noqa: BLE001
+            out["checks"]["queue_writable"] = {"ok": False,
+                                               "why": repr(exc)[:100]}
+            ok = False
+        # resolver API (zelf, via de store — proces intern) + provider-state
+        try:
+            items = await self.store.list_items()
+            ok_items = isinstance(items, list)
+            out["checks"]["resolver_items"] = {"ok": ok_items,
+                                               "count": len(items)}
+            ok = ok and ok_items
+        except Exception as exc:                   # noqa: BLE001
+            out["checks"]["resolver_items"] = {"ok": False,
+                                               "why": repr(exc)[:100]}
+            ok = False
+        out["checks"]["provider_state"] = {
+            "ok": not self.circuit.blocked(),
+            "state": self.circuit.snapshot().get("overall")}
+        # plex-exec aanwezig (docker-socket + container, zonder library-call)
+        try:
+            probe = await self.plex.read_probe("/dev/null")
+            out["checks"]["plex_exec"] = {"ok": "exit_code" in probe,
+                                          "read_ok": bool(probe.get("ok"))}
+            ok = ok and "exit_code" in probe
+        except Exception as exc:                   # noqa: BLE001
+            out["checks"]["plex_exec"] = {"ok": False, "why": repr(exc)[:100]}
+            ok = False
+        out["ok"] = ok
+        return out
+
+    async def delete_job(self, job_id: str) -> bool:
+        """Phase 32: veilige operator-annulering van een niet-terminal job."""
+        job = await self.store.get_job(job_id)
+        if job is None or job.status in TERMINAL_STATES:
+            return False
+        await self.store.add_event("ingest_job_cancelled", ingest_job=job.id,
+                                   title=job.title, source=job.source)
+        job.status = JobState.FAILED_FINAL.value
+        job.last_error = "geannuleerd door operator"
+        await self.store.update_job(job, {"status", "last_error", "updated_at"})
+        return True

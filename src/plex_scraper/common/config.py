@@ -297,7 +297,10 @@ class Settings:
             radarr_api_key=(
                 os.environ.get("RADARR_API_KEY", "").strip()
                 or _read_secret_file(os.environ.get("RADARR_API_KEY_FILE", ""))),
-            ingest_webhook_token=os.environ.get("INGEST_WEBHOOK_TOKEN", "").strip(),
+            ingest_webhook_token=(
+                os.environ.get("INGEST_WEBHOOK_TOKEN", "").strip()
+                or _read_secret_file(
+                    os.environ.get("INGEST_WEBHOOK_TOKEN_FILE", ""))),
             plex_container=os.environ.get("PLEX_CONTAINER", cls.plex_container),
             plex_section_tv=_int("PLEX_SECTION_TV", cls.plex_section_tv),
             plex_section_movies=_int("PLEX_SECTION_MOVIES", cls.plex_section_movies),

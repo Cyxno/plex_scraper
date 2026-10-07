@@ -551,6 +551,18 @@ class Store:
                 "WHERE id=?",
                 (int(job.monitored), int(job.wanted), job.arr_path,
                  job.arr_item_id, job.air_date_utc, job.title, m.now(), job.id))
+            # queue-correctness: een COMPLETED job waarvan het item wéér
+            # wanted+missing is (bestand weg, re-monitor) moet opnieuw kunnen
+            # draaien — re-activatie naar QUEUED met verse pogingen.
+            st = c.execute("SELECT status FROM ingest_jobs WHERE id=?",
+                           (job.id,)).fetchone()
+            if st is not None and st["status"] == "COMPLETED":
+                c.execute(
+                    "UPDATE ingest_jobs SET status='QUEUED', attempts=0, "
+                    "completed_at=NULL, last_error=NULL, provider_block=NULL, "
+                    "next_attempt_at=?, updated_at=? WHERE id=?",
+                    (m.now(), m.now(), job.id))
+                return job.id, True            # telt als (her)created
             return job.id, False
         return await self.run(fn)
 
@@ -560,6 +572,14 @@ class Store:
             row = c.execute("SELECT * FROM ingest_jobs WHERE id=?",
                             (job_id,)).fetchone()
             return self._row_to_job(row) if row else None
+        return await self.run(fn)
+
+    async def delete_job(self, job_id: str) -> bool:
+        """Canary-probe-rijen en operator-annulleringen (Phase 3/32)."""
+        def fn(c: sqlite3.Connection):
+            self._ingest_schema(c)
+            cur = c.execute("DELETE FROM ingest_jobs WHERE id=?", (job_id,))
+            return cur.rowcount > 0
         return await self.run(fn)
 
     async def get_job_by_dedupe(self, dedupe_key: str):

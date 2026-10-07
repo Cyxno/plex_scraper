@@ -461,6 +461,30 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
                                 content={"error": "ingest bridge niet actief"})
         return await bridge.reconcile()
 
+    @app.get("/api/ingest/canary")
+    async def ingest_canary():
+        """Phase 12: synthetische ketencheck (arr-API, queue-schrijftest,
+        resolver, provider-state, plex-exec) — geen downloads."""
+        bridge = getattr(app.state, "ingest", None)
+        if bridge is None:
+            return JSONResponse(status_code=409,
+                                content={"error": "ingest bridge niet actief"})
+        return await bridge.canary()
+
+    @app.delete("/api/ingest/jobs/{job_id}")
+    async def ingest_cancel_job(job_id: str):
+        """Phase 32: veilige annulering (niet-terminal → FAILED_FINAL met
+        reden + audit-event)."""
+        bridge = getattr(app.state, "ingest", None)
+        if bridge is None:
+            return JSONResponse(status_code=409,
+                                content={"error": "ingest bridge niet actief"})
+        if not await bridge.delete_job(job_id):
+            return JSONResponse(status_code=409,
+                                content={"error": "job niet annuleerbaar "
+                                                  "(onbekend of terminal)"})
+        return {"cancelled": job_id}
+
     @app.post("/api/ingest/jobs/{job_id}/retry")
     async def ingest_retry_job(job_id: str):
         from plex_scraper.ingest.models import JobState
