@@ -173,3 +173,47 @@ growth is a non-goal).
 /media/{id}`, `POST /media/{id}/resolve` (force re-resolution). Sonarr/Radarr
 webhooks or periodic *PlantTheVine*-style sync can call these; see
 [docs/sonarr-radarr-design.md](docs/sonarr-radarr-design.md).
+
+---
+
+## Ingest (1.0.0): arr-authoritative wanted-flow
+
+```
+Seerr ──▶ Sonarr/Radarr ──(webhook + 20min reconcile)──▶ IngestBridge (asyncio-task in resolver-proces)
+                                                              │
+                              persistent queue (state.db ingest_jobs, WAL, dedupe_key UNIQUE)
+                                                              │
+                 ownership-guards: arr hasFile → COMPLETED; gezonde arr-grab → defer
+                                                              │
+                              identity-guard → resolver-register (dubbel-preventie)
+                                                              │
+                              bounded resolve (circuit-gated; 429 → PROVIDER_WAIT)
+                                                              │
+                              READY → canonical .ids → atomische symlink (arr-seriepad)
+                                                              │
+                              leesprobe + scan in PLEX-container (authoritatieve namespace)
+                                                              │
+                              RescanSeries/RescanMovie → hasFile-poll → COMPLETED
+```
+
+Sleutel-contracten:
+
+* **Sonarr/Radarr bezitten WHAT** (catalog, monitored, wanted); **plex-scraper
+  bezit HOW** (bron, canonical `.ids`, symlink, playback-health); **Plex is
+  consumer**; webhook-payload is alleen een trigger — identiteit komt altijd
+  uit de arr-API (hervalidatie).
+* **Provider-budget**: Torrentio ~1 req/30-60s per IP (kale stream-URL);
+  circuit breaker + 3s pacing + batch=1 houden de queue binnen dat budget.
+  429/5xx/timeout zijn PROVIDER_WAIT/BACKEND_UNAVAILABLE — nooit NO_SOURCE.
+* **Pad-contract**: `/mnt/vm_storage/symlinks/<TV Shows|Movies>/...` (host) =
+  `/symlinks/...` (plex) = `/media` (sonarr) = `/media-movies` (radarr);
+  targets altijd `/mnt/remote/nzbdav/.ids/<h>/<h>/<h>/<h>/<h>/<uuid>`.
+  Probes/scans vinden in de plex-container plaats (`to_plex_ns`).
+* **Queue-semantiek**: 14 states; terminal = COMPLETED/BLOCKED_*/FAILED_FINAL;
+  PROVIDER_WAIT respecteert next_attempt_at (cap 1h); deferred werk keert bij
+  herstel via QUEUED terug; heractivering van COMPLETED bij opnieuw-wanted.
+* **Age-aware fair scheduling**: tier op air-date (nieuwe release eerst),
+  binnen tier next_attempt ASC.
+* **Health-dimensies** (onafhankelijk): CATALOG/INGEST (`/api/ingest/health`),
+  COVERAGE (`/data/coverage/latest.json`), PLAYBACK/RUNTIME (`/api/physical`),
+  PROVIDER (`/api/providers/health` + circuit).
