@@ -123,6 +123,23 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
     async def _provider(_req: Request, exc: ProviderError):
         return JSONResponse(status_code=502, content={"error": str(exc)})
 
+    from plex_scraper.scraper.provider_availability import ProviderBlackout
+
+    @app.exception_handler(ProviderBlackout)
+    async def _provider_blackout(_req: Request, exc: ProviderBlackout):
+        # Getype provider-semantiek (2026-10-08): een blackout is geen
+        # EIO/generic-fout — /stream en /open antwoorden 503 met een
+        # herkenbaar kind zodat bovenliggende lagen (VFS/Plex/cockpit) het
+        # kunnen attribueren. FUSE zelf moet een errno geven (EIO), maar de
+        # resolver-kant zegt expliciet WAT er aan de hand is.
+        return JSONResponse(status_code=503, content={
+            "error": "PROVIDER_UNAVAILABLE", "provider": exc.provider,
+            "state": exc.state, "endpoint_class": exc.endpoint_class,
+            "error_code": exc.error_code,
+            "cooldown_until": exc.cooldown_until,
+            "retry_in_s": round(max(exc.cooldown_until - time.time(), 0), 1),
+            "detail": str(exc)[:200]})
+
     # ------------------------------------------------------------- health
     @app.get("/health")
     async def health():

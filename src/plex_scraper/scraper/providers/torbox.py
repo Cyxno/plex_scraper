@@ -22,9 +22,19 @@ import time
 import httpx
 
 from plex_scraper.common.log import event
+from ..provider_availability import ProviderBlackout, ProviderAvailability, classify_429, default_availability
+from ..provider_errors import parse_retry_after
 from .base import DebridProvider, LinkExpiredError, NotReadyError, ProviderError, ProviderTorrent
 
 VIDEO_EXTS = (".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov", ".mpg", ".webm")
+
+
+def _endpoint_class(path: str) -> str:
+    """Endpoint-klasse voor events/snapshots (geen geheimen, geen URLs)."""
+    for known in ("requestdl", "createtorrent", "checkcached", "mylist"):
+        if known in path:
+            return known
+    return "api"
 
 
 class TokenBucket:
@@ -46,12 +56,14 @@ class TokenBucket:
 class TorboxProvider(DebridProvider):
     name = "torbox"
 
-    def __init__(self, settings, client: httpx.AsyncClient | None = None):
+    def __init__(self, settings, client: httpx.AsyncClient | None = None,
+                 availability: ProviderAvailability | None = None):
         self.s = settings
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(settings.torbox_timeout_read, connect=settings.torbox_timeout_connect),
             follow_redirects=False,
         )
+        self._avail = availability or default_availability()
         self._global = TokenBucket(4.0)                 # ~240/min < 300/min cap
         self._requestdl = TokenBucket(1.0)              # community-reported safe pace
         self._mylist_ttl_until = 0.0
@@ -59,7 +71,13 @@ class TorboxProvider(DebridProvider):
 
     # ------------------------------------------------------------------ api
     async def _request(self, method: str, path: str, *, params: dict | None = None,
-                       data: dict | None = None, retry: int = 0) -> dict:
+                       data: dict | None = None, retry: int = 0,
+                       gated: bool = True) -> dict:
+        # provider-blackout gate (2026-10-08): fail closed vóór élke API-call
+        # — tijdens een cooldown geen HTTP, geen per-caller retry-storm.
+        endpoint = _endpoint_class(path)
+        if gated:
+            self._avail.check(endpoint)
         await self._global.wait()
         try:
             resp = await self._client.request(
@@ -70,17 +88,42 @@ class TorboxProvider(DebridProvider):
                 headers={"Authorization": f"Bearer {self.s.torbox_api_token}"},
             )
         except httpx.TimeoutException as exc:
+            self._avail.report_backend_error(f"torbox timeout on {path}: {exc!r}",
+                                             endpoint_class=endpoint)
             raise ProviderError(f"torbox timeout on {path}: {exc!r}") from exc
         except httpx.HTTPError as exc:
+            self._avail.report_backend_error(f"torbox network error on {path}: {exc!r}",
+                                             endpoint_class=endpoint)
             raise ProviderError(f"torbox network error on {path}: {exc!r}") from exc
 
-        if resp.status_code == 429 or resp.status_code >= 500:
+        if resp.status_code == 429:
+            # HARDE 429: Retry-After centraal vastleggen en direct stoppen —
+            # de oude in-call retry (2s/4s, ook in het playback-pad) was precies
+            # de storm die requestdl naar een provider-wide blackout hamerde.
+            retry_after = parse_retry_after(resp.headers.get("Retry-After"))
+            body = (resp.text or "")[:300]
+            detail = f"torbox {path}: HTTP 429: {body}"
+            self._avail.report_429(retry_after_s=retry_after, detail=detail,
+                                   error_code=classify_429(body),
+                                   endpoint_class=endpoint)
+            raise ProviderBlackout(
+                self._avail.provider, self._avail.state,
+                endpoint_class=endpoint, retry_after_s=retry_after,
+                cooldown_until=self._avail.cooldown_until,
+                error_code=self._avail.error_code, detail=detail)
+
+        if resp.status_code >= 500:
             if retry < self.s.torbox_max_retries:
                 retry_after = resp.headers.get("Retry-After")
                 delay = float(retry_after) if retry_after and retry_after.isdigit() else 2.0 * (retry + 1)
                 event("torbox_retry", path=path, status=resp.status_code, delay=delay, attempt=retry + 1)
                 await asyncio.sleep(delay)
-                return await self._request(method, path, params=params, data=data, retry=retry + 1)
+                return await self._request(method, path, params=params,
+                                           data=data, retry=retry + 1,
+                                           gated=gated)
+            self._avail.report_backend_error(
+                f"torbox {path} failed after retries: HTTP {resp.status_code}",
+                endpoint_class=endpoint)
             raise ProviderError(f"torbox {path} failed after retries: HTTP {resp.status_code}")
 
         if resp.status_code >= 400:
@@ -91,6 +134,7 @@ class TorboxProvider(DebridProvider):
             raise ProviderError(f"torbox {path}: non-JSON response") from exc
         if not body.get("success", False) and path not in ("/torrents/checkcached",):
             raise ProviderError(f"torbox {path}: {body.get('detail') or body.get('error')}")
+        self._avail.report_success()
         return body
 
     # ------------------------------------------------------- DebridProvider
@@ -127,9 +171,13 @@ class TorboxProvider(DebridProvider):
         )
 
     async def get_stream_url(self, torrent_id: int, file_id: int) -> str:
+        # fail-closed vóór de pacer: tijdens een blackout geen bucket-wachtrij;
+        # _request hoeft daarna niet nogmaals te gaten (single-flight-probe
+        # zou anders op dezelfde aanroeper stuklopen)
+        self._avail.check("requestdl")
         await self._requestdl.wait()
         body = await self._request(
-            "GET", "/torrents/requestdl",
+            "GET", "/torrents/requestdl", gated=False,
             params={"torrent_id": torrent_id, "file_id": file_id,
                     "token": self.s.torbox_api_token, "redirect": "false"},
         )
@@ -139,6 +187,11 @@ class TorboxProvider(DebridProvider):
         return url
 
     async def read_range(self, url: str, start: int, length: int) -> bytes:
+        """CDN-leespad: bewust NIET gegate door de provider-availability —
+        een API-blackout mag lopende streams met een reeds geldige link niet
+        breken (alleen requestdl/createtorrent/mylist/checkcached zijn
+        fail-closed). 429/5xx hier blijven een begrensde in-call retry omdat
+        CDN-limits los staan van de API-limits."""
         end = start + length - 1
         for attempt in range(self.s.torbox_max_retries):
             try:

@@ -306,7 +306,25 @@ class IngestBridge:
         # 1) circuit-gate: bij open provider nul HTTP-kosten, wél ordelijke
         #    PROVIDER_WAIT-state (Phases 6/16). PROVIDER_WAIT-jobs worden
         #    expliciet mee-genomen zodat de cooldown netjes verlengt.
+        #    2026-10-08: ook de TorBox provider-blackout (requestdl-429) gate
+        #    hier — geen attempt-burn tijdens een API-cooldown.
+        avail = getattr(self.resolver, "availability", None)
         blocked = self.circuit.blocked()
+        if avail is not None and avail.blocked() and job.status in (
+                JobState.QUEUED.value, JobState.RESOLVING.value,
+                JobState.FAILED_RETRYABLE.value, JobState.IDENTITY_VERIFYING.value,
+                JobState.REGISTERING.value, JobState.PROVIDER_WAIT.value):
+            # geen attempt-burn tijdens een provider-blackout (2026-10-08):
+            # de increment bovenin process_job wordt hier teniet gedaan
+            job.attempts = 0
+            await self.store.update_job(job, {"attempts", "updated_at"})
+            self.metrics["provider_waits"] += 1
+            await self._set_state(
+                job, JobState.PROVIDER_WAIT,
+                provider_block=(f"provider blackout: {avail.provider} "
+                                f"({avail.state})"),
+                retry_in=max(avail.retry_in_s(), 30.0))
+            return
         if blocked and job.status in (JobState.QUEUED.value,
                                       JobState.RESOLVING.value,
                                       JobState.FAILED_RETRYABLE.value,
@@ -328,7 +346,8 @@ class IngestBridge:
         #    circuit-churn telt NIET als poging — alleen echt pipeline-werk.
         if job.status in (JobState.PROVIDER_WAIT.value,
                           JobState.FAILED_RETRYABLE.value):
-            if job.provider_block and "circuit open" in job.provider_block:
+            if job.provider_block and ("circuit open" in job.provider_block
+                                       or "provider blackout" in job.provider_block):
                 job.attempts = 0
             await self._set_state(job, JobState.QUEUED)
 
@@ -924,7 +943,11 @@ class IngestBridge:
             "last_reconcile_at": self._last_reconcile_at,
             "provider": {"blocked": blocked,
                          "state": snap.get("overall"),
-                         "retry_in_s": round(next_retry, 1)},
+                         "retry_in_s": round(next_retry, 1),
+                         "availability": (
+                             self.resolver.availability.snapshot()
+                             if getattr(self.resolver, "availability", None)
+                             else None)},
             "metrics": dict(self.metrics),
             "config_issues": list(self.config_issues),
         }
@@ -972,9 +995,14 @@ class IngestBridge:
             out["checks"]["resolver_items"] = {"ok": False,
                                                "why": repr(exc)[:100]}
             ok = False
+        avail = getattr(self.resolver, "availability", None)
+        av_snap = avail.snapshot() if avail is not None else {}
         out["checks"]["provider_state"] = {
-            "ok": not self.circuit.blocked(),
-            "state": self.circuit.snapshot().get("overall")}
+            "ok": not self.circuit.blocked() and not (av_snap.get("blocked")),
+            "state": self.circuit.snapshot().get("overall"),
+            "availability": {"state": av_snap.get("state"),
+                             "retry_in_s": av_snap.get("retry_in_s"),
+                             "cooldown_until": av_snap.get("cooldown_until")}}
         # plex-exec aanwezig (docker-socket + container, zonder library-call)
         try:
             probe = await self.plex.read_probe("/dev/null")

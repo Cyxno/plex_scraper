@@ -219,6 +219,18 @@ class JitController:
         self.metrics["jit_preflights_total"] += 1
         if not cfg.enabled:
             return JitDecision(FAST, 0, 0, required_mbit, note="jit disabled")
+        # provider-blackout (2026-10-08): geen probes, geen candidate-search —
+        # playback start gewoon op de huidige bron en de runtime-monitor
+        # bewaakt delivery. NOOIT een sessie afbreken om provider-state rood.
+        avail = getattr(self.resolver, "availability", None)
+        if avail is not None and avail.blocked():
+            self.metrics["jit_deferred_provider_unavailable"] += 1
+            await self.resolver._evt(
+                "jit_deferred_provider_unavailable", item=item,
+                hash=src_info_hash(source), provider=avail.provider,
+                state=avail.state, cooldown_until=avail.cooldown_until)
+            return JitDecision(FAST, 0, 0, required_mbit,
+                               note="provider blackout — jit deferred")
         risk = getattr(item, "_jit_risk", None)
         if required_mbit < cfg.preflight_min_mbit and risk != "HIGH_RISK":
             # FASE 2: lage-bitrate → direct fast path, geen preflight —
@@ -293,6 +305,19 @@ class JitController:
         """FASE 7/9/10/12: same-class kandidaten zoeken, top-N proben,
         winner atomisch activeren. Retourneert of er geswitcht is."""
         if item.plex_path in self._inflight:
+            return False
+        # provider-blackout: alle candidates lopen uiteindelijk tegen
+        # dezelfde geblokkeerde TorBox-API aan — defer i.p.v. zinloze probes
+        # met een misleidend jit_no_equivalent_source als gevolg.
+        avail = getattr(self.resolver, "availability", None)
+        if avail is not None and avail.blocked():
+            self.metrics["jit_deferred_provider_unavailable"] += 1
+            await self.resolver._evt(
+                "jit_deferred_provider_unavailable", item=item,
+                hash=src_info_hash(current), provider=avail.provider,
+                state=avail.state, cooldown_until=avail.cooldown_until,
+                context="search_and_switch")
+            decision.note = "provider blackout — failover deferred"
             return False
         self._inflight.add(item.plex_path)
         try:
@@ -499,6 +524,10 @@ class JitController:
         benchmark als current gezond is). Failover wordt dan sneller
         probe-ready. Geen library-scanning."""
         try:
+            avail = getattr(self.resolver, "availability", None)
+            if avail is not None and avail.blocked():
+                # geen prewarm-verkeer tijdens een provider-blackout
+                return
             cur_tier = quality_tier(current.torrent_name)["tier"]
             candidates = await self.resolver._gather_candidates(item)
             ranked = await self.resolver._rank_candidates(item, candidates)

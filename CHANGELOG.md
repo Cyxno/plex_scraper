@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.4 — 2026-10-08 (public-release hardening)
+## 1.0.4 — 2026-10-08 (public-release hardening + provider-blackout hardening)
 
 ### Public/privacy hardening
 - Removed site-specific LAN addresses and hostnames from committed defaults, deploy tooling and operator docs.
@@ -16,6 +16,70 @@
 - Public `docker-compose.yml` quick-start no longer requires a pre-existing secret file and works with `.env` or demo mode as documented.
 - Added contributing guidance plus redaction-aware bug/feature issue forms and a PR checklist.
 - Removed unused scratch/debug artifacts from the public tree.
+
+### Provider-blackout hardening: globale TorBox availability-state
+
+#### Root cause van de playback-incidenten (audit-gevalideerd)
+TorBox provider-wide 429 op `/torrents/requestdl`. De 429-semantiek was
+call-local: in-call retries (2s/4s + Retry-After) in het playback-pad, geen
+gedeelde cooldown, elke consument (resolve-validatie, JIT-probe, sweeper,
+ingest) hamerde onafhankelijk door → candidate-burn, misleidende
+`jit_no_equivalent_source`, vals NO_SOURCE, VFS/Plex-alerts zonder
+provider-attributie.
+
+#### Nieuw: `scraper/provider_availability.py`
+- Eén autoritatieve provider-state voor de hele stack (binnen het
+  resolver-proces; VFS doet zelf geen provider-calls): HEALTHY /
+  RATE_LIMITED / DAILY_LIMIT / DEGRADED / UNAVAILABLE, met cooldown_until,
+  Retry-After-honorering, error_code/reason en half-open single-flight
+  probe na cooldown-expiry.
+- Fail closed voor provider-API-calls (nul HTTP-kosten), NIET voor lokale
+  metadata-paden; CDN-readpad (`read_range` op reeds geldige links) blijft
+  bewust ongegate — lopende streams doorlopen tijdens een blackout.
+- Een TorBox-blackout is NOOIT een media-no-match.
+
+#### Subsystem-gedrag
+- `torbox.py`: gate vóór élke API-call (requestdl ook vóór de token-bucket);
+  429 → direct centrale cooldown, géén in-call retry-storm meer; 5xx/timeout
+  → DEGRADED/UNAVAILABLE met bounded backoff; `get_stream_url` antwoordt
+  getypeerd (`ProviderBlackout` → resolver-API 503 PROVIDER_UNAVAILABLE).
+- engine: blackout tijdens candidate-validatie → géén candidate-burn; met
+  actieve bron blijft het item READY (repair deferred), zonder actieve bron
+  PROVIDER_WAIT; `resolution_failed`/NO_SOURCE kan niet meer door een
+  blackout ontstaan; crash-reconcilie behandelt blackout als PROVIDER_WAIT.
+- JIT: `jit_deferred_provider_unavailable` i.p.v. zinloze probes en een
+  misleidend `jit_no_equivalent_source`; playback start gewoon op de huidige
+  bron; hot-spare-prewarm pauzeert.
+- sweeper: volledige pauze tijdens blackout (`sweep_paused_provider`),
+  batches breken mid-batch af.
+- ingest: jobs naar PROVIDER_WAIT op de blackout-cooldown, zonder
+  attempt-burn; stale PROVIDER_WAIT-items (incident-backlog) hervatten met
+  een verse resolve zodra de provider weer gezond is.
+
+#### Cockpit / events
+- `/api/providers/health` + `/api/dashboard`: `availability`-snapshot
+  (state, cooldown_until, retry_in_s, last_429_at, last_success_at,
+  error_code, blocked-requests, probes/recoveries); daily-usage = "unknown"
+  (niet betrouwbaar opvraagbaar — nooit schatten). Dashboard-health:
+  RATE_LIMITED/DEGRADED → ATTENTION, DAILY_LIMIT/UNAVAILABLE → DEGRADED;
+  VFS-component blijft zijn eigen lokale semantiek houden.
+- Nieuwe events met dedupe: `provider_blackout_started`,
+  `provider_blackout_extended` (alleen betekenisvolle verlenging),
+  `provider_blackout_recovered`, `provider_request_blocked_by_cooldown`
+  (≥30s interval).
+- Cockpit Providers-tab: TorBox-availability-kaart met kleursemantiek
+  (groen/amber/rood) en live cooldown-countdown.
+
+#### Tests / tooling
+- tests/test_provider_blackout.py: 16 regressietests (429→state, nul-HTTP
+  tijdens cooldown, géén NO_SOURCE, JIT-defer, ingest PROVIDER_WAIT zonder
+  attempt-burn, sweeper-pauze, CDN blijft werken, single-flight probe,
+  recovery + extended events, cockpit-payload, event-dedupe).
+- scripts/blackout_sim.py: synthetische end-to-end 429-simulatie tegen een
+  lokale stub (nul echt provider-verkeer).
+- Bekende beperking (onveranderd): tests/test_vfs_integration.py vereist
+  een werkend /dev/fuse in de test-runner en slaat in sandboxed runners op
+  de bekende manier niet.
 
 ## 1.0.3 — 2026-10-07 (JIT failover file-selectie-fix)
 

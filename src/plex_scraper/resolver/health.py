@@ -434,6 +434,14 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
         # beschikbaar is (probe via gewone resolve).
         circuit = getattr(self.resolver, "circuit", None)
         blocked = circuit.blocked() if circuit is not None else []
+        # provider-blackout: zoekactie loopt sowieso tegen de API-cooldown
+        # aan — item met rust laten, geen backoff-verhoging, geen probes.
+        avail = getattr(self.resolver, "availability", None)
+        if avail is not None and avail.blocked():
+            return {"skipped": "provider_wait",
+                    "provider": avail.provider,
+                    "state": avail.state,
+                    "next_retry_s": round(avail.retry_in_s(), 0)}
         if item.status == "PROVIDER_WAIT" or blocked:
             retry_in = 0.0
             snap = circuit.snapshot().get("scrapers", {}) if circuit is not None else {}
@@ -495,6 +503,18 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                 log.info("sweep gepauzeerd: %d actieve playback-streams", active)
                 return
 
+        # provider-blackout (2026-10-08): géén repairs/upgrades/probes die
+        # TorBox-verkeer veroorzaken zolang de API-cooldown actief is.
+        avail = getattr(self.resolver, "availability", None)
+        if avail is not None and avail.blocked():
+            if time.time() >= self._pause_logged_until:
+                self._log_json("sweeper", "sweep_paused_provider", {
+                    "provider": avail.provider, "state": avail.state,
+                    "cooldown_until": avail.cooldown_until,
+                    "retry_in_s": round(avail.retry_in_s(), 0)})
+                self._pause_logged_until = time.time() + 1800.0
+            return
+
         # DOEL 3-watchdog: tussenstanden die vastgelopen zijn reconciliëren
         try:
             stale = await self.resolver.store.reconcile_stale(900.0)
@@ -549,6 +569,20 @@ INSERT OR IGNORE INTO health_cursor (id, last_checked_path, last_checked_at)
                             except Exception:
                                 pass
                         return
+                # provider-blackout die midden in een batch intreedt: batch
+                # direct afbreken, geen verdere TorBox-aanroepen
+                if avail is not None and avail.blocked():
+                    log.info("sweep afgebroken: provider blackout (%s)",
+                             avail.state)
+                    if run_id is not None:
+                        try:
+                            await self.resolver.store.job_finish(
+                                run_id, "DEFERRED", reason="provider_blackout",
+                                checks=checks, repairs=repairs,
+                                recoveries=recoveries, processed=checks)
+                        except Exception:
+                            pass
+                    return
 
                 if item.status == "NO_SOURCE":
                     # backoff in beide modi: elke poging is een volledige

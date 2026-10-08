@@ -23,6 +23,11 @@ from plex_scraper.scraper.providers.torbox import VIDEO_EXTS
 from plex_scraper.common.scoring.release_parser import parse_release
 from plex_scraper.scraper.scrapers.base import Scraper, TorrentCandidate
 from plex_scraper.scraper.provider_circuit import ProviderCircuit
+from plex_scraper.scraper.provider_availability import (
+    ProviderAvailability,
+    ProviderBlackout,
+    default_availability,
+)
 from plex_scraper.scraper.provider_errors import ProviderSearchError
 from plex_scraper.resolver.selfheal import identity_gate
 from plex_scraper.resolver import media as m_prof
@@ -56,7 +61,8 @@ class UnresolvedError(Exception):
 class Resolver:
     def __init__(self, settings: Settings, store: Store, provider: DebridProvider,
                  scrapers: list[Scraper], scorer, caches: CacheSet,
-                 circuit: ProviderCircuit | None = None):
+                 circuit: ProviderCircuit | None = None,
+                 availability: ProviderAvailability | None = None):
         self.s = settings
         self.store = store
         self.provider = provider
@@ -64,6 +70,8 @@ class Resolver:
         self.scorer = scorer
         self.caches = caches
         self.circuit = circuit or ProviderCircuit()
+        self.availability = availability or default_availability()
+        self.availability.set_sink(self._persist_provider_event)
         self.sessions: dict[str, SessionContext] = {}
         self._resolve_locks: dict[str, asyncio.Lock] = {}
         self._sem = asyncio.Semaphore(settings.upstream_concurrency)
@@ -113,6 +121,16 @@ class Resolver:
         client = getattr(self.provider, "_client", None)
         if client is not None:
             await client.aclose()
+
+    def _persist_provider_event(self, kind: str, **fields) -> None:
+        """Availability-lifecycle (blackout start/extend/recover/blocked) naar
+        de persistente event-store. Sync sink: alleen schedulen als er een
+        loop draait — de structured log heeft de regel sowieso."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self.store.add_event(kind, **fields))
 
     # ------------------------------------------------------------- item mgmt
     async def register_item(self, payload: dict) -> m.MediaItem:
@@ -296,7 +314,37 @@ class Resolver:
                     continue
                 provider_adds += 1
             t0 = time.monotonic()
-            source = await self._validate_candidate(item, cand, rejects=rejects)
+            try:
+                source = await self._validate_candidate(item, cand, rejects=rejects)
+            except ProviderBlackout as exc:
+                # provider-blackout (2026-10-08): een 429-cooldown is NOOIT een
+                # candidate-failure — geen bad-TTL-burn. Met een nog-actieve
+                # vorige bron blijft die gewoon staan (onverifieerbaar is niet
+                # onbruikbaar, en READY→PROVIDER_WAIT zou de volgende open
+                # breken); zonder vorige bron: veilig parkeren in PROVIDER_WAIT.
+                self.metrics["resolutions_deferred_provider"] += 1
+                self.metrics["resolve_latency_sum"] += time.monotonic() - started
+                if previous is not None:
+                    item.status = m.ItemStatus.READY.value
+                    await self.store.update_runtime(item)
+                    await self._evt("repair_kept_current", item=item,
+                          reason=reason, hash=previous.info_hash,
+                          probe="deferred_provider_blackout",
+                          candidate_count=len(candidates),
+                          fallback_count=fallback_count,
+                          resolution_latency=round(time.monotonic() - started, 3),
+                          reason_for_source_switch=f"{reason}:kept_current_source")
+                    return previous
+                await self._evt("resolution_deferred_provider", item=item,
+                                reason=reason, provider=exc.provider,
+                                error_kind=ProviderBlackout.kind,
+                                endpoint_class=exc.endpoint_class,
+                                error_code=exc.error_code,
+                                cooldown_until=exc.cooldown_until,
+                                retry_after_s=exc.retry_after_s)
+                item.status = m.ItemStatus.PROVIDER_WAIT.value
+                await self.store.update_runtime(item)
+                return None
             validation_latency = time.monotonic() - t0
             if source is None:
                 fallback_count += 1
@@ -318,16 +366,44 @@ class Resolver:
         # DOEL 1: een gefaalde repair mag een nog-leesbare actieve bron nooit
         # omzetten naar NO_SOURCE. Probe de vorige bron; leest die nog, dan
         # behouden we hem en blijft het item READY (alleen event/history).
-        if previous is not None and await self._probe_readable(previous):
-            item.status = m.ItemStatus.READY.value
-            await self.store.update_runtime(item)
+        if previous is not None:
+            if self.availability.blocked():
+                # provider-blackout: leesbaarheid is nu niet verifieerbaar —
+                # "onverifieerbaar" is geen "onbruikbaar". Bron behouden,
+                # NOOIT naar NO_SOURCE (incident 2026-10).
+                item.status = m.ItemStatus.READY.value
+                await self.store.update_runtime(item)
+                self.metrics["resolve_latency_sum"] += time.monotonic() - started
+                await self._evt("repair_kept_current", item=item, reason=reason,
+                      hash=previous.info_hash, probe="deferred_provider_blackout",
+                      candidate_count=len(candidates), fallback_count=fallback_count,
+                      resolution_latency=round(time.monotonic() - started, 3),
+                      reason_for_source_switch=f"{reason}:kept_current_source")
+                return previous
+            if await self._probe_readable(previous):
+                item.status = m.ItemStatus.READY.value
+                await self.store.update_runtime(item)
+                self.metrics["resolve_latency_sum"] += time.monotonic() - started
+                await self._evt("repair_kept_current", item=item, reason=reason,
+                      hash=previous.info_hash,
+                      candidate_count=len(candidates), fallback_count=fallback_count,
+                      resolution_latency=round(time.monotonic() - started, 3),
+                      reason_for_source_switch=f"{reason}:kept_current_source")
+                return previous
+
+        if self.availability.blocked():
+            # geen previous + provider-blackout: het zoeken/valideren kon niet
+            # normaal rondkomen — PROVIDER_WAIT, nooit NO_SOURCE.
+            self.metrics["resolutions_deferred_provider"] += 1
             self.metrics["resolve_latency_sum"] += time.monotonic() - started
-            await self._evt("repair_kept_current", item=item, reason=reason,
-                  hash=previous.info_hash,
-                  candidate_count=len(candidates), fallback_count=fallback_count,
-                  resolution_latency=round(time.monotonic() - started, 3),
-                  reason_for_source_switch=f"{reason}:kept_current_source")
-            return previous
+            item.status = m.ItemStatus.PROVIDER_WAIT.value
+            await self.store.update_runtime(item)
+            await self._evt("resolution_deferred_provider", item=item,
+                            reason=reason, provider=self.availability.provider,
+                            error_kind=ProviderBlackout.kind,
+                            cooldown_until=self.availability.cooldown_until,
+                            note="blackout active at no-source verdict")
+            return None
 
         item.status = m.ItemStatus.NO_SOURCE.value
         await self.store.update_runtime(item)
@@ -358,6 +434,12 @@ class Resolver:
                     url, min(offset, max(0, size - 65536)), 65536)
                 if data:
                     return True
+            except ProviderBlackout as exc:
+                # probe kon niet eens starten (cooldown) — geen leesbewijs
+                await self._evt("keep_current_probe_failed",
+                                item_id=src.media_item_id, hash=src.info_hash,
+                                offset=offset, error_kind=ProviderBlackout.kind,
+                                error=repr(exc)[:120])
             except Exception as exc:                     # noqa: BLE001
                 await self._evt("keep_current_probe_failed",
                                 item_id=src.media_item_id, hash=src.info_hash,
@@ -366,13 +448,19 @@ class Resolver:
 
     async def _reconcile_after_crash(self, item: m.MediaItem,
                                      reason: str, exc: Exception) -> None:
-        """Reconcilieer een gecrashte resolve: actieve bron → READY, anders
-        NO_SOURCE. Nooit permanent in RESOLVING/CANDIDATE_VALIDATION blijven
-        hangen (de sweeper slaat tussenstanden over)."""
+        """Reconcilieer een gecrashte resolve: actieve bron → READY, provider-
+        blackout → PROVIDER_WAIT, anders NO_SOURCE. Nooit permanent in
+        RESOLVING/CANDIDATE_VALIDATION blijven hangen (de sweeper slaat
+        tussenstanden over)."""
         try:
             previous = await self._active_source(item.id)
-            item.status = (m.ItemStatus.READY.value if previous is not None
-                           else m.ItemStatus.NO_SOURCE.value)
+            if previous is not None:
+                item.status = m.ItemStatus.READY.value
+            elif isinstance(exc, ProviderBlackout):
+                # blackout is geen media-oordeel (2026-10-08)
+                item.status = m.ItemStatus.PROVIDER_WAIT.value
+            else:
+                item.status = m.ItemStatus.NO_SOURCE.value
             await self.store.update_runtime(item)
             await self._evt("resolution_crashed", item=item, reason=reason,
                   error=repr(exc)[:160], reconciled_status=item.status)
@@ -536,6 +624,10 @@ class Resolver:
                 url, max(0, src.size // 2), min(probe, max(1, src.size - src.size // 2)))
             if not middle:
                 raise ProviderError("range probe empty")
+        except ProviderBlackout:
+            # provider-cooldown: NOOIT candidate-burn — de resolve-loop
+            # vangt dit en zet het item op PROVIDER_WAIT (2026-10-08)
+            raise
         except (NotReadyError, ProviderError) as exc:
             err = str(exc)
             # A4: probe_failed gedecomposeerd in exacte faalsoort; A5: elke
@@ -672,7 +764,8 @@ class Resolver:
             source = await self.resolve_item(
                 item, reason="open_needs_source")
         if source is None:
-            raise UnresolvedError(f"no working source for {item.plex_path}")
+            raise UnresolvedError(
+                f"no working source for {item.plex_path} (status={item.status})")
         profile = self.media_profile(item, source.size)
         required = profile.required_mbit(self.s.sweeper_throughput_margin)
         # FASE 1/3: JIT playback preflight — alleen op het echte play-signaal

@@ -257,6 +257,17 @@ def create_ops_routes(app, resolver) -> APIRouter:
                     health = "DEGRADED"
                 elif iprovider.get("blocked") and health == "HEALTHY":
                     health = "ATTENTION"            # gewone, begrensde pauze
+        # provider-blackout (2026-10-08): direct zichtbaar in de dashboard-
+        # health. RATE_LIMITED/DEGRADED = ATTENTION (amber), DAILY_LIMIT/
+        # UNAVAILABLE = DEGRADED (rood). Dit raakt NIET het VFS-component:
+        # mounts/process-health blijven hun eigen, lokale semantiek houden.
+        avail = getattr(resolver, "availability", None)
+        availability = avail.snapshot() if avail is not None else None
+        if availability is not None and availability.get("blocked"):
+            if availability["state"] in ("DAILY_LIMIT", "UNAVAILABLE"):
+                health = "DEGRADED" if health == "HEALTHY" else health
+            elif health == "HEALTHY":
+                health = "ATTENTION"
         jobs = await store.job_runs(limit=3)
         running = [j for j in jobs if j["status"] == "RUNNING"]
 
@@ -269,6 +280,7 @@ def create_ops_routes(app, resolver) -> APIRouter:
             "health": health,
             "coverage": coverage,
             "ingest": ingest_block,
+            "provider_availability": availability,
             "physical": {"status": ph.get("status"),
                          "checked_at": ph.get("checked_at"),
                          "latency_s": ph.get("latency_s"),
@@ -663,8 +675,19 @@ def create_ops_routes(app, resolver) -> APIRouter:
         s["budget_limit"] = getattr(resolver.s, "max_provider_adds_per_resolve", 3)
         if s["provider_5xx"] > 5 or s["retries"] > 20:
             s["status"] = "DEGRADED"
+        # 2026-10-08: autoritatieve TorBox-availability (blackout-state,
+        # cooldown, timestamps) — de live state, niet 24h-eventstatistiek.
+        avail = getattr(resolver, "availability", None)
+        availability = avail.snapshot() if avail is not None else None
+        if availability is not None:
+            if availability.get("state") in ("DAILY_LIMIT", "UNAVAILABLE"):
+                s["status"] = availability["state"]
+            elif availability.get("state") in ("RATE_LIMITED", "DEGRADED") \
+                    and s["status"] == "HEALTHY":
+                s["status"] = availability["state"]
         out = {"providers": list(stats.values()),
-               "circuit": c_snap}
+               "circuit": c_snap,
+               "availability": availability}
         # Phase 39-semantiek: rate-limit zichtbaar als DEGRADED, nooit "no source"
         for name, sc in (c_snap.get("scrapers") or {}).items():
             if sc.get("state") not in ("HEALTHY", None) and sc.get("retry_in_s", 0) > 0:

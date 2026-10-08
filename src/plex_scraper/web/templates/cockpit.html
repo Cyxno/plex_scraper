@@ -810,6 +810,10 @@ function jobsHtml(d){
     <tbody>${(d.history||[]).map(hrow).join('')}</tbody></table></div>`;
 }
 /* ---------- providers ---------- */
+const AVAIL_SEVERITY = {
+  HEALTHY:'SUCCESS', RATE_LIMITED:'WARNING', DEGRADED:'WARNING',
+  DAILY_LIMIT:'ERROR', UNAVAILABLE:'ERROR',
+};
 function providersHtml(d){
   const rl = d.rate_limit
     ? `<div class="banner DEGRADED" style="margin-bottom:10px">${badge('DEGRADED','DEGRADED')}` +
@@ -817,6 +821,32 @@ function providersHtml(d){
       ` · retry in <b class="num" data-retry-until="${Date.now()+d.rate_limit.retry_in_s*1000}">${fmtIn(d.rate_limit.retry_in_s)}</b>` +
       ` · <span class="muted">source: ${esc(d.rate_limit.retry_source||'backoff')}</span></span></div>`
     : '';
+  const av = d.availability;
+  let avail = '';
+  if (av) {
+    const sev = AVAIL_SEVERITY[av.state] || 'INFO';
+    const usage = (av.daily_usage && av.daily_usage.percent_used != null)
+      ? `${av.daily_usage.percent_used}%` : 'unknown';
+    avail = `<div class="panel" data-testid="torbox-availability">`
+      + `<h3>TorBox availability ${badge(av.state, sev)}</h3>`
+      + `<div class="muted" style="margin-bottom:6px">`
+      + (av.blocked
+          ? `cooldown active — recovery in <b class="num" data-retry-until="${Date.now()+av.retry_in_s*1000}">${fmtIn(av.retry_in_s)}</b>`
+          : `no cooldown active`)
+      + (av.error_code ? ` · code ${esc(av.error_code)}` : '')
+      + (av.reason && av.blocked ? ` · ${esc(av.reason)}` : '')
+      + `</div>`
+      + `<div class="grid kpis">`
+      + kpi('Last success', av.last_success_at ? fmtAgo(av.last_success_at) : 'unknown')
+      + kpi('Last 429', av.last_429_at ? fmtAgo(av.last_429_at) : '–')
+      + kpi('Blackout since', av.blackout_started_at ? fmtAgo(av.blackout_started_at) : '–')
+      + kpi('Daily usage', usage, '', 'not estimated')
+      + kpi('429 events', (av.metrics||{}).rate_limit_events??0)
+      + kpi('Requests blocked', (av.metrics||{}).requests_blocked??0, '', 'deferred, zero HTTP')
+      + kpi('Probes', (av.metrics||{}).probes??0)
+      + kpi('Recoveries', (av.metrics||{}).recoveries??0, 'ok')
+      + `</div></div>`;
+  }
   const circuit = d.circuit ? Object.entries(d.circuit.scrapers||{}).map(([name, sc])=>
     `<div class="panel"><h3>circuit · ${esc(name)} ${badge(sc.state, sc.state==='HEALTHY'?'SUCCESS':'WARNING')}</h3>
       <div class="grid kpis" style="margin-top:6px">
@@ -836,7 +866,7 @@ function providersHtml(d){
       ${kpi('Half-open probes', (d.circuit.metrics||{}).half_open_probes??0)}
       </div></div>`
     : '';
-  return rl + d.providers.map(p=>`
+  return avail + rl + d.providers.map(p=>`
     <div class="panel"><h3>${esc(p.name)} ${badge(p.status,p.status==='HEALTHY'?'SUCCESS':'WARNING')} <span class="muted">· window ${esc(p.window||'24h')}</span></h3>
     <div class="grid kpis" style="margin-top:6px">
       ${kpi('Retries',p.retries)}${kpi('HTTP 400',p.provider_400)}${kpi('HTTP 429',p.provider_429)}
