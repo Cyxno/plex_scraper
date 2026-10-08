@@ -457,3 +457,30 @@ async def test_meaningful_extension_emits_extended_event():
     kinds = [k for k, _ in av.events]
     assert kinds.count("provider_blackout_extended") == 1
     assert av.cooldown_until > time.time() + 1700
+
+
+async def test_stale_provider_wait_item_resumes_after_heal(tmp_path, settings):
+    """Incident-backlog (46u PROVIDER_WAIT): zodra de provider weer gezond
+    is, moet een stale PROVIDER_WAIT-item een verse resolve krijgen en niet
+    eeuwig opnieuw als PROVIDER_WAIT gemarkeerd worden."""
+    from plex_scraper.ingest.bridge import IngestBridge
+    from plex_scraper.ingest.models import IngestJob, JobState
+    av = fresh_availability()
+    resolver = make_engine(settings, av)
+    item = await register_item(resolver)
+    assert await resolver.fail_current(item.id)
+    blackout(av)
+    await resolver.resolve_item(item, reason="blackout")
+    assert (await resolver.store.get_item(item.id)).status == "PROVIDER_WAIT"
+
+    av.report_success()                          # provider hersteld
+    bridge = IngestBridge(resolver, resolver.s)
+    job = IngestJob(source="sonarr", arr_item_id="1:2", kind="episode",
+                    dedupe_key="tv:tt0944947:S01E01", title="test", season=1,
+                    episode=1, show_imdb_id="tt0944947")
+    await resolver.store.upsert_job(job)
+    await bridge.process_job(job)
+    item_after = await resolver.store.get_item(item.id)
+    fresh_job = await resolver.store.get_job(job.id)
+    assert item_after.status == "READY"          # verse resolve is gelukt
+    assert fresh_job.status != JobState.PROVIDER_WAIT.value

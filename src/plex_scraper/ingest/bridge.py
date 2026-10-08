@@ -344,10 +344,12 @@ class IngestBridge:
         # 2) circuit weer gezond → deferred jobs keren terug in de pipeline
         #    (anders zijn PROVIDER_WAIT/FAILED_RETRYABLE doodlopende states);
         #    circuit-churn telt NIET als poging — alleen echt pipeline-werk.
+        #    "bootstrap deferred" hoort bij dezelfde provider-churn-familie.
         if job.status in (JobState.PROVIDER_WAIT.value,
                           JobState.FAILED_RETRYABLE.value):
             if job.provider_block and ("circuit open" in job.provider_block
-                                       or "provider blackout" in job.provider_block):
+                                       or "provider blackout" in job.provider_block
+                                       or "bootstrap deferred" in job.provider_block):
                 job.attempts = 0
             await self._set_state(job, JobState.QUEUED)
 
@@ -388,15 +390,26 @@ class IngestBridge:
         if item.status == m.ItemStatus.READY.value:
             await self._set_state(job, JobState.READY)
         elif item.status == m.ItemStatus.PROVIDER_WAIT.value:
-            retry_in = 0.0
-            snap = self.circuit.snapshot().get("scrapers", {})
-            for name in self.circuit.blocked():
-                retry_in = max(retry_in, snap.get(name, {}).get("retry_in_s", 0))
-            self.metrics["provider_waits"] += 1
-            await self._set_state(
-                job, JobState.PROVIDER_WAIT,
-                provider_block="bootstrap deferred (provider unavailable)",
-                retry_in=max(retry_in, 60.0))
+            # 2026-10-08: een PROVIDER_WAIT-item is een provider-churn-
+            # tussenstand, geen eindoordeel. Zolang de provider nog cooldown
+            # heeft: job veilig parkeren; is de provider weer gezond, dan
+            # een verse resolve (de oude code liet het item eeuwig in
+            # PROVIDER_WAIT staan — incident-backlog van 46u bewees dat).
+            avail = getattr(self.resolver, "availability", None)
+            if self.circuit.blocked() or (avail is not None and avail.blocked()):
+                retry_in = 0.0
+                snap = self.circuit.snapshot().get("scrapers", {})
+                for name in self.circuit.blocked():
+                    retry_in = max(retry_in, snap.get(name, {}).get("retry_in_s", 0))
+                if avail is not None:
+                    retry_in = max(retry_in, avail.retry_in_s())
+                self.metrics["provider_waits"] += 1
+                await self._set_state(
+                    job, JobState.PROVIDER_WAIT,
+                    provider_block="bootstrap deferred (provider unavailable)",
+                    retry_in=max(retry_in, 60.0))
+            else:
+                await self._set_state(job, JobState.RESOLVING)
         elif item.status == m.ItemStatus.NO_SOURCE.value:
             # bestaand item met oude/stale NO_SOURCE — laat _resolve hem
             # opnieuw zoeken (candidate-cache weg, circuit bepaalt); pas na
