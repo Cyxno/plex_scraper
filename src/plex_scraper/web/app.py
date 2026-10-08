@@ -49,8 +49,8 @@ def create_web_app(settings: Settings) -> FastAPI:
                     m["primary_vfs"] = True
                 if "/mnt/remote/nzbdav" in line and "fuse" in line:
                     m["rehydrate_vfs"] = True
-                if "decypharr" in line and "fuse" in line:
-                    m["decypharr"] = True
+        # decypharr-metric verwijderd: legacy-component buiten gebruik
+        # (retirement 2026-10-08) — geen actieve health-metric meer.
         return m
 
     def classify(last_error, fail_class):

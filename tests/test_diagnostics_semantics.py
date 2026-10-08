@@ -149,3 +149,20 @@ async def test_last_runs_prefers_newest_valid_sweep(env):
     assert runs and runs[0]["status"] == "SUCCESS"       # nieuwste sweeper-run
     assert all(r["id"] != other for r in runs)           # geen mix van types
     assert {r["id"] for r in runs} >= {old, new}
+
+
+def test_web_mounts_report_has_no_legacy_component():
+    """Observability-cleanup: de web _mounts()-weergave meldt geen legacy
+    decypharr-component meer (retirement 2026-10-08) — alleen de twee
+    plex-scraper FUSE-mounts zijn actieve signalen."""
+    import inspect
+
+    from plex_scraper.web import app as web_app
+    src = inspect.getsource(web_app)
+    # de _mounts-bron mag decypharr niet meer als metric zetten
+    fn_start = src.index("def _mounts()")
+    fn_end = src.index("def classify", fn_start)
+    mounts_src = src[fn_start:fn_end]
+    assert "decypharr" not in mounts_src.replace(
+        "# decypharr-metric verwijderd", "")
+    assert "primary_vfs" in mounts_src and "rehydrate_vfs" in mounts_src
