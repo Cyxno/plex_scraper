@@ -270,6 +270,11 @@ def create_ops_routes(app, resolver) -> APIRouter:
                 health = "ATTENTION"
         jobs = await store.job_runs(limit=3)
         running = [j for j in jobs if j["status"] == "RUNNING"]
+        # Diagnostics-semantiek (2026-10-08): "Last sweep" toont de laatste
+        # GELDIGE run — een oude INTERRUPTED run mag een nieuwere SUCCESS
+        # niet verbergen; daarvoor een job-type-gefilterde lijst i.p.v. de
+        # gemixte recent-3 (waar andere jobtypes de sweeper-runs verdrukten).
+        sweeper_runs = await store.job_runs(job_type="health_sweeper", limit=6)
 
         # KPI-semantiek (audit 2026-10-07): Pending is het complement en
         # wordt server-side berekend zodat Ready + Issues + Pending altijd
@@ -315,7 +320,7 @@ def create_ops_routes(app, resolver) -> APIRouter:
                                        "finished_at": j.get("finished_at"),
                                        "processed": j.get("processed"),
                                        "recovered": j.get("recovered")}
-                                      for j in jobs if j["job_type"] == "health_sweeper"]},
+                                      for j in sweeper_runs]},
         }
 
     @router.get("/dashboard")

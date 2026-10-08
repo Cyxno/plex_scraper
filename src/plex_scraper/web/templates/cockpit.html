@@ -139,6 +139,9 @@ h2.sec{font-size:12.5px;font-weight:600;letter-spacing:.01em;
 .dg-name{color:var(--text-muted);flex:0 0 128px}
 .dg-val{color:var(--text);font-weight:600;display:inline-flex;align-items:center}
 .dg-sub{color:var(--text-muted);font-size:11.5px}
+/* Inventory: historische data — bewust gedempt, geen health-kleuren */
+.diaglist.inv{opacity:.72}
+.diaglist.inv .dg-val{color:var(--text-muted);font-weight:500}
 /* ---------- KPI (providers/ingest detail) ---------- */
 .grid{display:grid;gap:var(--sp-3)}
 .kpis{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
@@ -327,6 +330,9 @@ summary{cursor:pointer;color:var(--accent);font-size:12px}
   </div>
   <h2 class="sec">Diagnostics</h2>
   <div id="diagnostics"></div>
+  <h2 class="sec">Inventory</h2>
+  <div class="muted" style="font-size:11.5px;margin:-4px 0 6px 2px">historical snapshots — informational only, not live health</div>
+  <div id="inventory"></div>
 </section>
 <section id="s-activity">
   <div class="seg" id="actfilters" style="margin-bottom:var(--sp-3)">
@@ -579,30 +585,67 @@ function activeNowHtml(d, nowSec){
   return jrows + rrows;
 }
 function diagnosticsHtml(d){
+  /* LIVE operationele health alléén (semantiek-audit 2026-10-08):
+     geen snapshots, geen historische tellingen — die horen in Inventory. */
   const P = d.physical || {};
   const rows = [];
   rows.push(`<div class="dg-row"><span class="dg-name">Physical library</span>
     <span class="dg-val">${DOT(P.status==='HEALTHY'?'':P.status==='FAILED'?'err':P.status?'warn':'off')} ${esc(P.status||'unknown')}</span>
     <span class="dg-sub">${P.checked_at?fmtAgo(P.checked_at):'timestamp unavailable'}</span></div>`);
-  const runs = (d.sweeper && d.sweeper.last_runs) || [];
-  const lastSweep = runs.find(r=>r.status!=='RUNNING') || runs[0];
-  if (lastSweep) rows.push(`<div class="dg-row"><span class="dg-name">Last sweep</span>
-    <span class="dg-val">${esc(lastSweep.status)}</span>
-    <span class="dg-sub">${lastSweep.processed!=null?`${fmtNum(lastSweep.processed)} checked · `:''}${lastSweep.finished_at?fmtAgo(lastSweep.finished_at):fmtAgo(lastSweep.started_at)}</span></div>`);
-  const C = d.coverage;
-  if (C && C.logical_total) {
-    // Audit 2026-10-07: puntmoment-snapshot van een andere populatie —
-    // diagnostics, nooit live health. legacy_dead (meetfout) tonen we niet.
-    const ageLbl = C.age_s!=null ? fmtAgeLabel(C.age_s) : 'timestamp unavailable';
-    const stale = !C.age_s || C.age_s > 48*3600;
-    rows.push(`<div class="dg-row"><span class="dg-name">Coverage</span>
-      <span class="dg-val num">${fmtNum(C.managed)} / ${fmtNum(C.logical_total)}</span>
-      <span class="dg-sub">${stale?'stale snapshot':'snapshot'} · ${ageLbl} · not live health</span></div>`);
-    rows.push(`<div class="dg-row"><span class="dg-name">Legacy audit</span>
-      <span class="dg-val">outdated</span>
-      <span class="dg-sub">recount pending · not live health</span></div>`);
+  const A = d.provider_availability;
+  if (A) rows.push(`<div class="dg-row"><span class="dg-name">Provider availability</span>
+    <span class="dg-val">${DOT(A.state==='HEALTHY'?'':(A.state==='DAILY_LIMIT'||A.state==='UNAVAILABLE')?'err':'warn')} ${esc(A.state)}</span>
+    <span class="dg-sub">${A.blocked?`cooldown ${fmtIn(A.retry_in_s||0)}`:'no cooldown'} · ${A.last_success_at?fmtAgo(A.last_success_at):'no success yet'}</span></div>`);
+  const runs = (d.sweeper && d.sweeper.last_runs) || [];   // nieuwste eerst
+  const last = runs[0];
+  let sweep = null, sweepNote = '';
+  if (last) {
+    if (last.status === 'SUCCESS' || last.status === 'RUNNING') {
+      sweep = last;
+    } else {
+      // INTERRUPTED/DEFERRED is alleen actueel als er géén nieuwere
+      // geslaagde run is; anders toont de laatste geldige run
+      const good = runs.find(r=>r.status==='SUCCESS');
+      if (good) { sweep = good; sweepNote = 'na interrupted run · '; }
+      else { sweep = last; sweepNote = 'historisch · '; }   // geen alarmkleur
+    }
+  }
+  if (sweep) rows.push(`<div class="dg-row"><span class="dg-name">Last sweep</span>
+    <span class="dg-val">${esc(sweep.status)}</span>
+    <span class="dg-sub">${sweepNote}${sweep.processed!=null?`${fmtNum(sweep.processed)} checked · `:''}${sweep.finished_at?fmtAgo(sweep.finished_at):fmtAgo(sweep.started_at)}</span></div>`);
+  const IG = d.ingest;
+  if (IG && IG.enabled !== false) {
+    const c = IG.counts_by_state || {};
+    const ACTIVE_STATES = ['QUEUED','IDENTITY_VERIFYING','REGISTERING','RESOLVING',
+                           'PROVIDER_WAIT','READY','DELIVERING','PLEX_REFRESH',
+                           'FAILED_RETRYABLE'];
+    const active = ACTIVE_STATES.reduce((a,k)=>a+(c[k]||0),0);
+    const paused = IG.provider && IG.provider.blocked && IG.provider.blocked.length;
+    rows.push(`<div class="dg-row"><span class="dg-name">Ingest queue</span>
+      <span class="dg-val">${fmtNum(active)} active</span>
+      <span class="dg-sub">${paused?'paused (provider cooldown) · live':'live queue'}</span></div>`);
   }
   return `<div class="diaglist">${rows.join('')}</div>`;
+}
+function inventoryHtml(d){
+  /* Historische/informatieve data — bewust muted, nooit health-kleuren,
+     nooit percentages als live library-health, nooit fictieve pending. */
+  const rows = [];
+  const C = d.coverage;
+  if (C && C.logical_total) {
+    const ageLbl = C.age_s!=null ? fmtAgeLabel(C.age_s) : 'timestamp unavailable';
+    rows.push(`<div class="dg-row"><span class="dg-name">Coverage snapshot</span>
+      <span class="dg-val num">${fmtNum(C.managed)} / ${fmtNum(C.logical_total)}</span>
+      <span class="dg-sub">${ageLbl} · informational only</span></div>`);
+  }
+  // 'recount' alleen als er WERKELIJK een draaiende audit-job is —
+  // geen fictieve pending-status (er bestaat vandaag geen audit-jobtype)
+  const auditRunning = ((d.now && d.now.jobs_running) || [])
+    .some(j=>j.job_type==='library_audit');
+  rows.push(`<div class="dg-row"><span class="dg-name">Legacy audit</span>
+    <span class="dg-val">${auditRunning?'recount running':'no current recount'}</span>
+    <span class="dg-sub">historisch · geen live health-signaal</span></div>`);
+  return `<div class="diaglist inv">${rows.join('')}</div>`;
 }
 function overviewHtml(d){
   const L = d.library;
@@ -667,7 +710,8 @@ function overviewHtml(d){
       <span class="w-right">${badge('RECOVERED')} <span class="num">${fmtAgeLabel(w.ago_s)}</span></span>
     </div>`;}).join('') + `</div>`
     : `<div class="idleline">No automatic recoveries in the last 24h</div>`;
-  return {status, health, strip, active, wins, diag: diagnosticsHtml(d)};
+  return {status, health, strip, active, wins,
+          diag: diagnosticsHtml(d), inventory: inventoryHtml(d)};
 }
 /* ---------- activity ---------- */
 let actFilter='all', actPage=0;
@@ -978,6 +1022,7 @@ function refresh(sec){
     paintInto('#healthbanner','hb',h.status); paintInto('#healthcluster','hh',h.health);
     paintInto('#statstrip','st',h.strip); paintInto('#nowactive','na',h.active);
     paintInto('#wins','wi',h.wins); paintInto('#diagnostics','dg',h.diag);
+    paintInto('#inventory','iv',h.inventory);
     const P = d.physical||{};
     $('#sb-phys').className = 'st-dot' + (P.status==='HEALTHY'?'':P.status==='FAILED'?' err':' warn');
     $('#sb-phystxt').textContent = P.status||'–';
