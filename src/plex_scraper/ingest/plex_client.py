@@ -177,3 +177,90 @@ class PlexExecClient:
         return await self._exec(script, "|".join(
             [show_title, str(season), str(episode), guid_imdb or "",
               file_suffix or ""]))
+
+    # ---------------------------------------------- media-revalidatie
+    async def analyze_item(self, rating_key: int | str) -> dict:
+        """Item-gerichte media-analyse: herbouwt media_parts/media_streams.
+
+        Dit is de bewezen kleinste supported repair na een bron-generatie-
+        wissel (audit 2026-10-09): scope = exact dit item, geen section-scan.
+        """
+        script = (
+            "import json,sys,re,urllib.request\n"
+            "rk = sys.argv[1]\n"
+            "tok = re.search(r'PlexOnlineToken=\"([^\"]+)\"',\n"
+            "    open('/config/Plex Media Server/Preferences.xml').read()).group(1)\n"
+            "url = (f'http://127.0.0.1:32400/library/metadata/{rk}/analyze'\n"
+            "       f'?X-Plex-Token={tok}')\n"
+            "req = urllib.request.Request(url, method='PUT')\n"
+            "with urllib.request.urlopen(req, timeout=30) as r:\n"
+            "    print(json.dumps({'analyzed': rk, 'status': r.status}))\n")
+        return await self._exec(script, str(rating_key))
+
+    async def get_media_info(self, rating_key: int | str) -> dict:
+        """Actuele media-metadata (parts/streams) zoals Plex die ziet."""
+        script = (
+            "import json,sys,re,urllib.request\n"
+            "rk = sys.argv[1]\n"
+            "tok = re.search(r'PlexOnlineToken=\"([^\"]+)\"',\n"
+            "    open('/config/Plex Media Server/Preferences.xml').read()).group(1)\n"
+            "req = urllib.request.Request(\n"
+            "    f'http://127.0.0.1:32400/library/metadata/{rk}',\n"
+            "    headers={'Accept':'application/json','X-Plex-Token':tok})\n"
+            "out = {'ok': False}\n"
+            "try:\n"
+            "    md = json.loads(urllib.request.urlopen(req, timeout=60).read())\n"
+            "    mt = (md['MediaContainer'].get('Metadata') or [{}])[0]\n"
+            "    med = (mt.get('Media') or [{}])[0]\n"
+            "    part = (med.get('Part') or [{}])[0]\n"
+            "    streams = []\n"
+            "    for st in part.get('Stream') or []:\n"
+            "        streams.append({'index': st.get('index'),\n"
+            "                        'type': st.get('streamType'),\n"
+            "                        'codec': st.get('codec')})\n"
+            "    vst = next((s for s in streams if str(s['type'])=='1'), {})\n"
+            "    ast = next((s for s in streams if str(s['type'])=='2'), {})\n"
+            "    out = {'ok': True,\n"
+            "           'container': med.get('container') or part.get('container'),\n"
+            "           'video_codec': vst.get('codec'),\n"
+            "           'audio_codec': ast.get('codec'),\n"
+            "           'width': med.get('width'), 'height': med.get('height'),\n"
+            "           'duration_s': (float(med['duration'])/1000.0\n"
+            "                           if med.get('duration') else None),\n"
+            "           'size': part.get('size'),\n"
+            "           'streams': streams}\n"
+            "except Exception as e:\n"
+            "    out = {'ok': False, 'error': repr(e)[:120]}\n"
+            "print(json.dumps(out))\n")
+        return await self._exec(script, str(rating_key))
+
+    async def find_rating_key_by_path(self, plex_path: str) -> int | None:
+        """ratingKey van het metadata-item dat dit part-bestand bezit.
+
+        plex_path is ons stabiele VFS-pad (/mnt/remote/...); in Plex-namespace
+        is dat /symlinks/... Zoekt in beide TV- en movie-sections.
+        """
+        script = (
+            "import json,sys,re,urllib.request,urllib.parse\n"
+            "suffix = sys.argv[1]\n"
+            "tok = re.search(r'PlexOnlineToken=\"([^\"]+)\"',\n"
+            "    open('/config/Plex Media Server/Preferences.xml').read()).group(1)\n"
+            "rk = None\n"
+            "for section in (2, 1):\n"
+            "    if rk: break\n"
+            "    url = (f'http://127.0.0.1:32400/library/sections/{section}/all'\n"
+            "           f'?includeFields=file&X-Plex-Token={tok}')\n"
+            "    try:\n"
+            "        mds = json.loads(urllib.request.urlopen(url, timeout=60).read())\n"
+            "    except Exception:\n"
+            "        continue\n"
+            "    for mt in (mds['MediaContainer'].get('Metadata') or []):\n"
+            "        for med in mt.get('Media') or []:\n"
+            "            for pt in med.get('Part') or []:\n"
+            "                if (pt.get('file') or '').endswith(suffix):\n"
+            "                    rk = mt['ratingKey']; break\n"
+            "print(json.dumps({'rating_key': rk}))\n")
+        import os
+        suffix = os.path.basename(plex_path)
+        out = await self._exec(script, suffix)
+        return out.get("rating_key")

@@ -721,6 +721,16 @@ class Resolver:
         await self.store.update_source(source)
         item.status = m.ItemStatus.READY.value
         await self.store.update_runtime(item)
+        if switched and previous is not None:
+            # gerichte Plex-revalidatie bij material change (faalveilig: de
+            # swap is gecommit; een exceptie hier mag nooit terugwerken)
+            reval = getattr(self, "_revalidator", None)
+            if reval is not None:
+                try:
+                    reval.on_swap(item, previous, source)
+                except Exception as exc:        # pragma: no cover
+                    event("plex_revalidation_queue_error",
+                          item_id=item.id, error=repr(exc)[:160])
 
     async def _active_source(self, item_id: str) -> m.Source | None:
         for src in await self.store.list_sources(item_id):
@@ -766,6 +776,18 @@ class Resolver:
         if source is None:
             raise UnresolvedError(
                 f"no working source for {item.plex_path} (status={item.status})")
+        # playback-guard: bij een verse generatiewissel kan Plex' media-
+        # metadata nog stale zijn (Invalid decoder type). Wacht bounded op
+        # de revalidatie (de analyze leest zelf via deze VFS) en val daarna
+        # door — nooit een sessie blokkeren op een niet-lopende job.
+        reval = getattr(self, "_revalidator", None)
+        if reval is not None and two_way != 0:
+            try:
+                await reval.wait_for_coherent(
+                    item.id,
+                    getattr(self.s, "plex_revalidation_open_wait_s", 8.0))
+            except Exception:                   # pragma: no cover
+                pass
         profile = self.media_profile(item, source.size)
         required = profile.required_mbit(self.s.sweeper_throughput_margin)
         # FASE 1/3: JIT playback preflight — alleen op het echte play-signaal

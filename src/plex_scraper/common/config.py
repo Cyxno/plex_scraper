@@ -16,6 +16,13 @@ def _bool(name: str, default: bool = False) -> bool:
     return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
 def _read_secret_file(path: str) -> str:
     """Docker-secrets / Unraid keyfile support: token never lives in env."""
     if not path:
@@ -153,6 +160,15 @@ class Settings:
     sonarr_root_map: str = "/media=TV Shows"           # arrroot=subtree
     radarr_root_map: str = "/media-movies=Movies"
     arr_reconcile_enabled: bool = True
+
+    # gerichte Plex-metadata-revalidatie na bron-generatiewissel
+    plex_revalidation_enabled: bool = True
+    plex_revalidation_cooldown_s: float = 120.0      # dedupe-venster per item
+    plex_revalidation_attempts: int = 3              # bounded retry
+    plex_revalidation_size_rel_tol: float = 0.02     # material-size-tolerantie
+    plex_revalidation_min_size_delta_mb: float = 50.0
+    plex_revalidation_duration_rel_tol: float = 0.05
+    plex_revalidation_open_wait_s: float = 8.0       # playback-guard time-out
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -304,6 +320,22 @@ class Settings:
             plex_container=os.environ.get("PLEX_CONTAINER", cls.plex_container),
             plex_section_tv=_int("PLEX_SECTION_TV", cls.plex_section_tv),
             plex_section_movies=_int("PLEX_SECTION_MOVIES", cls.plex_section_movies),
+            plex_revalidation_enabled=_bool(
+                "PLEX_REVALIDATION_ENABLED", cls.plex_revalidation_enabled),
+            plex_revalidation_cooldown_s=_float(
+                "PLEX_REVALIDATION_COOLDOWN_S", cls.plex_revalidation_cooldown_s),
+            plex_revalidation_attempts=_int(
+                "PLEX_REVALIDATION_ATTEMPTS", cls.plex_revalidation_attempts),
+            plex_revalidation_size_rel_tol=_float(
+                "PLEX_REVALIDATION_SIZE_REL_TOL", cls.plex_revalidation_size_rel_tol),
+            plex_revalidation_min_size_delta_mb=_float(
+                "PLEX_REVALIDATION_MIN_SIZE_DELTA_MB",
+                cls.plex_revalidation_min_size_delta_mb),
+            plex_revalidation_duration_rel_tol=_float(
+                "PLEX_REVALIDATION_DURATION_REL_TOL",
+                cls.plex_revalidation_duration_rel_tol),
+            plex_revalidation_open_wait_s=_float(
+                "PLEX_REVALIDATION_OPEN_WAIT_S", cls.plex_revalidation_open_wait_s),
             symlink_root=os.environ.get("SYMLINK_ROOT", cls.symlink_root),
             plex_symlink_root=os.environ.get(
                 "PLEX_SYMLINK_ROOT", cls.plex_symlink_root),

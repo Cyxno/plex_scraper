@@ -109,6 +109,25 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
         async def _stop_ingest():
             bridge.stop()
 
+    # gerichte Plex-metadata-revalidatie na bron-generatiewissel
+    if getattr(settings, "plex_revalidation_enabled", True):
+        from plex_scraper.ingest.plex_client import PlexExecClient
+        from plex_scraper.resolver.plex_revalidation import PlexRevalidator
+        reval = PlexRevalidator(
+            resolver,
+            PlexExecClient(container=settings.plex_container),
+            settings)
+        resolver._revalidator = reval
+        app.state.revalidator = reval
+
+        @app.on_event("startup")
+        async def _start_revalidation():
+            reval.start()
+
+        @app.on_event("shutdown")
+        async def _stop_revalidation():
+            reval.stop()
+
     @app.exception_handler(KeyError)
     async def _not_found(_req: Request, exc: KeyError):
         return JSONResponse(status_code=404, content={"error": str(exc)})

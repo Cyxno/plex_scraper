@@ -628,6 +628,10 @@ def create_ops_routes(app, resolver) -> APIRouter:
                                "size": active.size, "generation": active.generation,
                                "info_hash": active.info_hash[:12]}
                               if active else None),
+            "plex_metadata": (getattr(resolver, "_revalidator", None)
+                              .snapshot(item_id)
+                              if getattr(resolver, "_revalidator", None)
+                              else {"state": "UNKNOWN", "job": None}),
             "timeline": [{"ts": e["ts"], "kind": e["kind"]} for e in evs[-60:]],
         }
 

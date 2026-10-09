@@ -991,11 +991,13 @@ async function openItem(id){
       {l:'Plex mapping', v:i.plex_path, ok:!!i.plex_path},
       {l:'Resolver item', v:`${i.id.slice(0,8)} (gen ${i.generation})`, ok:true},
       {l:'Current source', v:t.active_source?`${t.active_source.file_name} · ${(t.active_source.size/2**30).toFixed(2)} GB`:'none', ok:!!t.active_source},
+      {l:'Plex metadata', v:t.plex_metadata?t.plex_metadata.state:'UNKNOWN', ok:!t.plex_metadata||t.plex_metadata.state==='COHERENT'},
     ];
     const matrix = `
       <tr><td>Identity</td><td>${i.kind==='episode' ? (i.show_imdb_id?badge('Healthy','SUCCESS'):badge('Incomplete','WARNING')) : badge('Healthy','SUCCESS')}</td></tr>
       <tr><td>Source</td><td>${t.active_source?badge('Active','SUCCESS'):badge(i.status==='NO_SOURCE'?'No usable':'None', i.status==='NO_SOURCE'?'NO_SOURCE':'WARNING')}</td></tr>
       <tr><td>Path</td><td>${i.plex_path?badge('Configured','SUCCESS'):badge('Missing','FAILED')}</td></tr>
+      <tr><td>Plex metadata</td><td>${t.plex_metadata?badge(t.plex_metadata.state, t.plex_metadata.state==='COHERENT'?'SUCCESS':t.plex_metadata.state==='REVALIDATING'?'RUNNING':'WARNING'):badge('Unknown','neutral')}${t.plex_metadata&&t.plex_metadata.job?`<div class="muted">${esc((t.plex_metadata.job.reasons||[]).join('; '))}</div>`:''}</td></tr>
       <tr><td>Delivery</td><td>${badge('Not active','neutral')}</td></tr>`;
     const head = i.series
       ? `${esc(i.series)} <span class="muted">${esc(`S${String(i.season).padStart(2,'0')}E${String(i.episode).padStart(2,'0')}`)}</span> · ${esc(i.title||'')}`
