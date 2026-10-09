@@ -660,8 +660,13 @@ function overviewHtml(d){
     : L.identity_incomplete ? `${fmtNum(L.identity_incomplete)} items identity incomplete`
     : 'all managed items healthy';
   const dotCls = d.health==='HEALTHY' ? '' : d.health==='ERROR' ? ' err' : ' warn';
+  const dailyLimited = d.ingest && d.ingest.provider
+    && d.ingest.provider.availability && d.ingest.provider.availability.state === 'DAILY_LIMIT';
   const ingestNote = (d.ingest && d.ingest.provider && d.ingest.provider.blocked && d.ingest.provider.blocked.length)
-    ? ` · provider rate limited (${esc(d.ingest.provider.blocked.join(', '))}), retry in ${fmtIn(d.ingest.provider.retry_in_s||0)} — queue paused safely` : '';
+    ? (dailyLimited
+        ? ` · Daily bandwidth limit reached (${esc(d.ingest.provider.blocked.join(', '))}) · waiting for provider reset — queue paused safely`
+        : ` · provider rate limited (${esc(d.ingest.provider.blocked.join(', '))}), retry in ${fmtIn(d.ingest.provider.retry_in_s||0)} — queue paused safely`)
+    : '';
   let status = `<div class="statusline"><span class="st-dot ${dotCls}"></span>`
     + `<b>${esc(HLABEL[d.health]||d.health)}</b>`
     + `<span class="cause">· ${esc(cause)}${ingestNote}</span></div>`;
@@ -875,7 +880,9 @@ function providersHtml(d){
       + `<h3>TorBox availability ${badge(av.state, sev)}</h3>`
       + `<div class="muted" style="margin-bottom:6px">`
       + (av.blocked
-          ? `cooldown active — recovery in <b class="num" data-retry-until="${Date.now()+av.retry_in_s*1000}">${fmtIn(av.retry_in_s)}</b>`
+          ? (av.state === 'DAILY_LIMIT'
+              ? `Daily bandwidth limit reached · waiting for provider reset`
+              : `cooldown active — recovery in <b class="num" data-retry-until="${Date.now()+av.retry_in_s*1000}">${fmtIn(av.retry_in_s)}</b>`)
           : `no cooldown active`)
       + (av.error_code ? ` · code ${esc(av.error_code)}` : '')
       + (av.reason && av.blocked ? ` · ${esc(av.reason)}` : '')
@@ -934,7 +941,9 @@ function ingestHtml(d){
   const banner = `<div class="banner ${st[1]==='SUCCESS'?'HEALTHY':st[1]==='INFO'?'':st[1]}" aria-live="polite">`
     + `${badge(st[0], st[1]==='SUCCESS'?'SUCCESS':st[1])}<span class="h">${esc(st[2])}</span>`
     + (prov.blocked && prov.blocked.length
-        ? `<span class="cause">— ${esc(prov.blocked.join(', '))} rate limited · retry in <b class="num">${fmtIn(prov.retry_in_s||0)}</b> — <b>geen false NO_SOURCE</b>: jobs blijven bewaard en gaan automatisch verder</span>`
+        ? (prov.availability && prov.availability.state === 'DAILY_LIMIT'
+            ? `<span class="cause">— Daily bandwidth limit reached (${esc(prov.blocked.join(', '))}) · waiting for provider reset — <b>geen false NO_SOURCE</b>: jobs blijven bewaard en gaan automatisch verder</span>`
+            : `<span class="cause">— ${esc(prov.blocked.join(', '))} rate limited · retry in <b class="num">${fmtIn(prov.retry_in_s||0)}</b> — <b>geen false NO_SOURCE</b>: jobs blijven bewaard en gaan automatisch verder</span>`)
         : '')
     + `</div>`;
   const counts = d.counts_by_state||{};

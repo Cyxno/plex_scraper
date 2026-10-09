@@ -10,8 +10,10 @@ VFS/Plex-alerts zonder provider-attributie.
 
 States:
   HEALTHY       requests gaan normaal door
-  RATE_LIMITED  harde 429 — cooldown (Retry-After of bounded backoff)
-  DAILY_LIMIT   daglimiet — lange cooldown
+  RATE_LIMITED  harde 429 — cooldown (Retry-After of bounded backoff),
+                na expiry één half-open probe
+  DAILY_LIMIT   daglimiet — lange cooldown (meerdere uren, Retry-After
+                alleen als langer); géén 60s-probe-loop tot de day-reset
   DEGRADED      5xx/timeout-streak — korte bounded backoff
   UNAVAILABLE   aanhoudende backend-storingen — langere backoff
 
@@ -101,7 +103,7 @@ class ProviderAvailability:
     def __init__(self, provider: str = "torbox", *,
                  rate_limit_steps: tuple = RATE_LIMIT_STEPS_S,
                  backend_steps: tuple = BACKEND_STEPS_S,
-                 daily_default_cooldown_s: float = 3600.0,
+                 daily_default_cooldown_s: float = 4 * 3600.0,
                  daily_max_cooldown_s: float = 6 * 3600.0):
         self.provider = provider
         self._rate_steps = rate_limit_steps
@@ -211,16 +213,22 @@ class ProviderAvailability:
 
             new_state = RATE_LIMITED if self.error_code != DAILY_LIMIT \
                 else DAILY_LIMIT
-            if retry_after_s is not None and retry_after_s > 0:
+            if new_state == DAILY_LIMIT:
+                # 2026-10-09: DAILY_LIMIT is geen gewone rate-limit. TorBox
+                # stuurt bij de daglimiet-429 een korte Retry-After (~60s)
+                # mee; die overschreef de daglimiet-cooldown en produceerde
+                # een 429-probe-loop tot de provider-day-reset. Retry-After
+                # telt hier alleen als hij LANGER is dan de daily-default;
+                # de daily-reset-tijd is onbetrouwbaar bekend, dus een
+                # veilige meerurige minimum-cooldown.
+                delay = max(self._daily_default_s, retry_after_s or 0.0)
+                delay = min(delay, self._daily_max_s)
+            elif retry_after_s is not None and retry_after_s > 0:
                 delay = retry_after_s
-            elif new_state == DAILY_LIMIT:
-                delay = min(self._daily_default_s, self._daily_max_s)
             else:
                 step = self._rate_steps[
                     min(self.consecutive_429s - 1, len(self._rate_steps) - 1)]
                 delay = step
-            if new_state == DAILY_LIMIT:
-                delay = min(delay, self._daily_max_s)
 
             self.metrics["rate_limit_events"] += 1
             self._transition_locked(new_state, now + delay, now)
