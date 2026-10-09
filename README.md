@@ -115,4 +115,16 @@ Bug reports and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIB
 
 ## License
 
+<<<<<<< HEAD
 MIT — see [LICENSE](LICENSE).
+=======
+AGPL-3.0-only (GNU Affero General Public License v3.0) — see [LICENSE](LICENSE)
+
+## Rollen & diagnostics GUI (oct 2026)
+
+Eén image, vier process-roles: `resolver`, `vfs`, `scraper` (optionele
+standalone scraper-API), `web` (read-only diagnostics GUI). Zie
+[README-ROLES.md](README-ROLES.md). Diagnostics GUI: `http://<host>:8285/` —
+health, resolver totals, queue, failures en per-item playback-trace
+(resolver → symlink → VFS → backend → read-test) met retry-acties.
+>>>>>>> 7575306 (Relicense MIT -> AGPL-3.0-only)
