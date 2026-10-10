@@ -121,7 +121,8 @@ class AdaptiveRangeReader:
                 and self._seq_small >= self._escalate_after()):
             self.two_way = True
             self._escalated = True
-            self.engine.metrics["readahead_escalations"] += 1
+            self.engine.metrics["readahead_escalations"] = (
+                self.engine.metrics.get("readahead_escalations", 0) + 1)
             self._maybe_prefetch(offset)
 
     def _escalate_after(self) -> int:
@@ -177,7 +178,8 @@ class AdaptiveRangeReader:
             # FASE 12: adaptive fallback — 2-way presteert slechter, terug
             # naar single-stream voor deze sessie
             self.two_way = False
-            self.engine.metrics["adaptive_fallbacks"] += 1
+            self.engine.metrics["adaptive_fallbacks"] = (
+                self.engine.metrics.get("adaptive_fallbacks", 0) + 1)
             log.info("adaptive fallback naar single-stream %s: %r",
                      self.source_id[:12], exc)
 
