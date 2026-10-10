@@ -2,16 +2,26 @@
 
 Eén AdaptiveRangeReader per open handle:
 
-- Sequentiële reads worden geserveerd uit een bounded window-buffer.
-- Bij een window-miss: synchrone fetch van het gevraagde window; in 2-way
-  mode wordt tegelijk het VOLGENDE window alvast opgehaald (bounded: max
-  1 outstanding prefetch per reader, telt mee voor de globale upstream-
-  semaphore).
-- Seek buiten het prefetch-traject cancelt de prefetch (geen stale bytes);
-  release/stop cancelt eveneens. Bytes worden uitsluitend geserveerd uit
-  het huidige window — bytevolgorde is daarmee exact.
-- Adaptive fallback: herhaalde provider-fouten tijdens 2-way schakelen de
-  reader terug naar single-stream (geen runaway parallelisme).
+- Windows zijn READAHEAD-gealigneerd (dedup: hetzelfde window wordt nooit
+  twee keer tegelijk opgehaald — in-flight-registry per window-offset).
+- Twee modes:
+    * SEEK_RECOVERY_PREFETCH (recovery=True): cold open / seek / Cue-jump /
+      probe-fase — tot 3 outstanding remote windows (P0 = gevraagd window,
+      P1 = volgende sequentiële window, P2 = speculatief alleen bij
+      sequentie-vooruitgang). Doel: aggregaat-doorvoer tijdens de probe/jump-
+      fase (bewezen: 1 verbinding ≈ 17–39 Mbit, 3 parallel ≈ 103 Mbit).
+    * normaal (recovery=False, two_way=True): één outstanding prefetch —
+      het bewezen gedrag voor sequentiële playback.
+- De-escalatie: 2 opeenvolgende volledig sequentieel geconsumeerde windows
+  zonder jump/cancel → recovery uit, terug naar normaal.
+- Jump/seek buiten het buffertraject: obsolete in-flight/ready windows
+  worden gecanceld (geen stale bytes), recovery heractiveert.
+- Session close / reconnect / material switch: engine sluit sessies —
+  close() cancelt álles; oude futures kunnen nooit een nieuwe generatie
+  bedienen (reader is per sessie/source gebonden).
+- Adaptive fallback: herhaalde provider-fouten schakelen terug naar
+  single-stream (geen runaway parallelisme).
+- Metrics: plain dict met safe increments — ontbrekende keys gooien nooit.
 """
 from __future__ import annotations
 
@@ -20,31 +30,44 @@ import logging
 
 log = logging.getLogger("stream")
 
+MAX_INFLIGHT_RECOVERY = 3
+MAX_INFLIGHT_NORMAL = 1
+MAX_READY_WINDOWS = 2
+DEESCALATE_AFTER_WINDOWS = 2
+
 
 class AdaptiveRangeReader:
     def __init__(self, engine, source_id: str, size: int, readahead: int,
                  two_way: bool = False,
                  fallback_after_errors: int = 2):
         self.engine = engine
-        self.source_id = source_id
+        self.source_id = source_id          # source-bound: geen cross-source hergebruik
         self.size = size
         self.readahead = readahead
-        self.two_way = two_way
+        self.two_way = two_way              # normaal: 1 outstanding prefetch
+        self.recovery = False               # SEEK_RECOVERY_PREFETCH (cap 3)
         self.fallback_after_errors = fallback_after_errors
         self._buf_off = -1
         self._buf = b""
-        self._prefetch_off: int | None = None
-        self._prefetch_task: asyncio.Task | None = None
+        self._inflight: dict[int, asyncio.Task] = {}   # window-offset → task
+        self._ready: dict[int, bytes] = {}             # klaar, nietconsumeerde windows
         self._err_streak = 0
         self.closed = False
-        # read-ahead-escalatie (incident Pirates 2026-10-10): een consument
-        # met kleine sequentiële reads (Plex FUSE: 32 KiB) zonder read-ahead
-        # levert 9–14 Mbit i.p.v. 37,5+ — de serialisatie tussen windows
-        # (alleen het VOLGENDE window ophalen als two_way aan staat) wordt
-        # dynamisch opgeheven zodra het patroon zichzelf bewijst
+        # sequentie-detectie (escalatie + de-escalatie)
         self._last_end = -1
         self._seq_small = 0
         self._escalated = False
+        self._seq_windows = 0               # volledig sequentieel geconsumeerde windows
+
+    # ------------------------------------------------------------ metrics
+    def _m(self, key: str, delta: int | float = 1) -> None:
+        """Safe increment — metrics zijn een plain dict; een ontbrekende key
+        mag nooit een KeyError/404/EIO veroorzaken (regressie 2026-10-10)."""
+        try:
+            m = self.engine.metrics
+            m[key] = m.get(key, 0) + delta
+        except Exception:                        # noqa: BLE001 — never throw
+            pass
 
     # ------------------------------------------------------------ public
     async def read(self, offset: int, length: int) -> bytes:
@@ -53,87 +76,177 @@ class AdaptiveRangeReader:
         length = min(length, self.size - offset)
         if length <= 0:
             return b""
+        # reads kunnen een window-grens crossingen — per aligned window
+        # bedienen (byte-exact, nooit bytes over een grens heen mengen)
+        out = bytearray()
+        while length > 0:
+            n = min(length, self.readahead - (offset % max(self.readahead, 1)))
+            chunk = await self._read_window(offset, n)
+            if not chunk:
+                break
+            out += chunk
+            offset += len(chunk)
+            length -= len(chunk)
+        return bytes(out)
+
+    async def _read_window(self, offset: int, length: int) -> bytes:
+        wo = self._window_of(offset)
+        length = min(length, self.readahead - (offset - wo))
 
         # 1) hit in het huidige window
         if self._buf_off <= offset < self._buf_off + len(self._buf):
             data = self._buf[offset - self._buf_off:]
             if len(data) >= length:
                 self._track_sequential(offset, length)
-                self._maybe_prefetch(offset)
+                self._count_window_progress(offset)
+                self._schedule(offset)
                 return data[:length]
 
-        # 2) hit in de lopende prefetch (volgend window is al onderweg)
-        if (self._prefetch_task is not None
-                and self._prefetch_off is not None
-                and self._prefetch_off <= offset
-                and offset < self._prefetch_off + self.readahead):
-            off = self._prefetch_off
+        # 2) klaarliggend (reeds gefetcht, nog niet geconsumeerd) window
+        if wo in self._ready:
+            data = self._ready.pop(wo)
+            self._buf_off, self._buf = wo, data
+            self._m("remote_window_reused")
+            self._m("speculative_bytes_used", len(data))
+            self._err_streak = 0
+            self._track_sequential(offset, length)
+            self._count_window_progress(offset)
+            self._schedule(offset)
+            return data[offset - self._buf_off:][:length]
+
+        # 3) in-flight window: wait op de gedeelde task (dedup — dezelfde
+        #    remote window wordt nooit dubbel opgehaald)
+        if wo in self._inflight:
+            task = self._inflight.pop(wo)
             try:
-                data = await self._prefetch_task
-                self.engine.metrics["prefetch_hits"] += 1
+                data = await task
+                self._ready.pop(wo, None)        # geen double-hold
+                self._m("remote_window_reused")
+                self._m("speculative_bytes_used", len(data))
+            except asyncio.CancelledError:
+                raise
             except Exception:
-                data = None                       # fallback naar synchroon
-            finally:
-                self._clear_prefetch()
+                data = None                      # fallback naar synchroon
             if data:
-                self._buf_off, self._buf = off, data
+                self._buf_off, self._buf = wo, data
                 self._err_streak = 0
                 self._track_sequential(offset, length)
-                self._maybe_prefetch(offset)
+                self._count_window_progress(offset)
+                self._schedule(offset)
                 return data[offset - self._buf_off:][:length]
+            # gefaald → val door naar de synchrone miss-pad hieronder
 
-        # 3) miss: stale prefetch opruimen en synchroon fetchen
+        # 4) miss: jump-detectie, obsolete werk cancelen, synchroon fetchen
         fresh_session = self._last_end == -1
+        jumped = self._is_jump(offset, wo)
         self._track_sequential(offset, length, miss=True)
-        self._clear_prefetch()
-        data = await self._fetch(offset)
-        self._buf_off, self._buf = offset, data
-        if fresh_session and not self.two_way:
-            # seek-startup-optimalisatie (incident Pirates 19:50 CEST): een
-            # verse ffmpeg-open is per definitie een sequentiële probe —
-            # start het tweede window meteen, i.p.v. na 6 hits. Eén extra
-            # 8 MiB window, cancelbaar, geheugen blijft gebonden (2 windows).
-            self.two_way = True
-            self._escalated = True
-            self.engine.metrics["readahead_escalations"] = (
-                self.engine.metrics.get("readahead_escalations", 0) + 1)
-        self._maybe_prefetch(offset)
-        return data[:length]
+        self._cancel_obsolete(wo)
+        if jumped or fresh_session:
+            self._activate_recovery(jumped=jumped, fresh=fresh_session)
+        data = await self._fetch(wo)
+        self._buf_off, self._buf = wo, data
+        self._count_window_progress(offset)
+        self._schedule(offset)
+        return data[offset - self._buf_off:][:length]
 
     def close(self) -> None:
-        """FASE 18: client stopt → prefetch cancelen, buffers loslaten."""
+        """Client stopt / reconnect / material switch: alle outstanding
+        werk cancelen, buffers loslaten. Geen orphan background requests."""
         self.closed = True
-        self._clear_prefetch()
+        self._cancel_all_inflight()
+        self._ready.clear()
         self._buf = b""
         self._buf_off = -1
 
     # ----------------------------------------------------------- internals
+    def _window_of(self, offset: int) -> int:
+        """Gealigneerd window-voetspoor: dedup voorspelbaar per offset."""
+        ra = max(self.readahead, 1)
+        return (offset // ra) * ra
+
+    def _is_jump(self, offset: int, wo: int) -> bool:
+        """Niet-sequentiële sprong: ver van het huidige window en niet
+        bediend door ready/in-flight."""
+        if self._buf_off < 0:
+            return False
+        return not (self._buf_off - self.readahead <= offset
+                    <= self._buf_off + len(self._buf) + self.readahead) \
+            and wo not in self._inflight and wo not in self._ready
+
+    def _activate_recovery(self, jumped: bool, fresh: bool) -> None:
+        if self.recovery:
+            return
+        self.recovery = True
+        self._seq_windows = 0
+        self._m("seek_recovery_activated")
+        self._m("readahead_escalations")
+        if jumped:
+            self._m("seek_recovery_jump")
+
+    def _deescalate(self) -> None:
+        if not self.recovery:
+            return
+        self.recovery = False
+        self._m("seek_recovery_deescalated")
+
+    def _count_window_progress(self, offset: int) -> None:
+        """De-escalatie: 2 opeenvolgende volledig sequentieel geconsumeerde
+        windows zonder jump → recovery uit (normale playback)."""
+        if not self.recovery:
+            return
+        if self._last_end >= 0 and \
+                self._buf_off <= self._last_end < self._buf_off + len(self._buf):
+            self._seq_windows += 1
+        else:
+            self._seq_windows = 0
+        if self._seq_windows >= DEESCALATE_AFTER_WINDOWS:
+            self._deescalate()
+
+    def _cancel_obsolete(self, keep_wo: int) -> None:
+        """Jump: in-flight/ready windows die het nieuwe demargebied niet
+        kunnen bedienen onmiddellijk cancelen/verwijderen."""
+        lo, hi = keep_wo - self.readahead, keep_wo + 2 * self.readahead
+        for w in [w for w in self._inflight if not (lo <= w <= hi)]:
+            task = self._inflight.pop(w)
+            task.cancel()
+            self._m("remote_window_cancelled")
+            self._m("seek_recovery_cancelled")
+            self._m("speculative_bytes_wasted", self._window_len(w))
+        for w in [w for w in self._ready if not (lo <= w <= hi)]:
+            self._m("speculative_bytes_wasted", len(self._ready.pop(w)))
+        if self._inflight or self._ready:
+            self._seq_windows = 0
+
+    def _cancel_all_inflight(self) -> None:
+        for w, task in list(self._inflight.items()):
+            task.cancel()
+            self._m("remote_window_cancelled")
+            self._m("speculative_bytes_wasted", self._window_len(w))
+        self._inflight.clear()
+
+    def _window_len(self, wo: int) -> int:
+        return min(self.readahead, max(0, self.size - wo))
+
+    def _cap(self) -> int:
+        return MAX_INFLIGHT_RECOVERY if self.recovery else MAX_INFLIGHT_NORMAL
+
     def _track_sequential(self, offset: int, length: int,
                           miss: bool = False) -> None:
-        """Escalatie-guard: kleine sequentiële reads (FUSE-consument) zonder
-        read-ahead → schakel prefetch in na N bevestigde hits. Seeks/grote
-        of random reads resetten de teller — geen runaway overfetch."""
-        if miss:
-            # miss op direct-opvolgend offset is alsnog sequentieel gedrag
-            if self._last_end >= 0 and offset == self._last_end \
-                    and length <= self._escalate_max_len():
-                self._seq_small += 1
-            else:
-                self._seq_small = 0
+        """Escalatie-guard (normale mode): kleine sequentiële reads (FUSE)
+        zonder prefetch → single-prefetch na N bevestigde hits. Jumps/grote
+        reads resetten de teller."""
+        if (miss and self._last_end >= 0 and offset == self._last_end
+                or not miss and offset == self._last_end) and \
+                length <= self._escalate_max_len():
+            self._seq_small += 1
         else:
-            if (offset == self._last_end
-                    and length <= self._escalate_max_len()):
-                self._seq_small += 1
-            else:
-                self._seq_small = 0
+            self._seq_small = 0
         self._last_end = offset + length
-        if (not self.two_way and not self._escalated
+        if (not self.two_way and not self.recovery and not self._escalated
                 and self._seq_small >= self._escalate_after()):
             self.two_way = True
             self._escalated = True
-            self.engine.metrics["readahead_escalations"] = (
-                self.engine.metrics.get("readahead_escalations", 0) + 1)
-            self._maybe_prefetch(offset)
+            self._m("readahead_escalations")
 
     def _escalate_after(self) -> int:
         s = getattr(self.engine, "s", None)
@@ -143,53 +256,75 @@ class AdaptiveRangeReader:
         s = getattr(self.engine, "s", None)
         return max(1024, int(getattr(s, "stream_seq_escalate_max_len", 131072)))
 
-    def _clear_prefetch(self) -> None:
-        if self._prefetch_task is not None:
-            self._prefetch_task.cancel()
-            self._prefetch_task = None
-            if self._prefetch_off is not None:
-                self.engine.metrics["prefetch_cancelled_bytes"] += self.readahead
-        self._prefetch_off = None
-
-    def _maybe_prefetch(self, offset: int) -> None:
-        """FASE 8: haal het volgende window alvast op (max 1 outstanding)."""
-        if (not self.two_way or self.closed
-                or self._prefetch_task is not None):
+    def _schedule(self, offset: int) -> None:
+        """Demand-aware scheduling: P0 = gedemandeerd window (loopt al),
+        P1 = volgende sequentiële window, P2 = speculatief derde window
+        alléén in recovery-mode met sequentie-vooruitgang. Cap: max 3
+        outstanding in recovery, 1 normaal; ready+inflight gebonden."""
+        if self.closed or not self.two_way and not self.recovery:
             return
-        next_off = self._buf_off + len(self._buf)
-        if next_off >= self.size:
+        cap = self._cap()
+        if self._buf_off < 0:
             return
-        # alleen prefetchen bij sequentieel leesgedrag; een ver seek
-        # (verder dan 1 window vooruit) maakt prefetch zinloos
-        if offset < self._buf_off - self.readahead or \
-                offset > self._buf_off + len(self._buf) + self.readahead:
+        base = self._buf_off + len(self._buf)
+        if base >= self.size:
             return
-        window = min(self.readahead, self.size - next_off)
-        self._prefetch_off = next_off
+        next_w = base                    # _buf_off is altijd gealigneerd
+        # sequentie-vooruitgang vereist voor P2 (geen blind lineair giswerk
+        # tijdens jump-fases)
+        allow_p2 = self.recovery and self._seq_windows >= 1
+        started = 0
+        for i, w in enumerate((next_w, next_w + self.readahead)):
+            if w >= self.size:
+                break
+            if w in self._inflight or w in self._ready:
+                self._m("duplicate_fetch_avoided")
+                continue
+            if len(self._inflight) + len(self._ready) >= cap:
+                break
+            if i == 1 and not allow_p2:
+                break
+            wl = self._window_len(w)
+            self._m("remote_window_started")
+            if i == 1:
+                self._m("speculative_bytes_requested", wl)
+            self._inflight[w] = asyncio.get_event_loop().create_task(
+                self._fetch_window(w))
+            started += 1
+        try:
+            self.engine.metrics["concurrent_windows_current"] = len(self._inflight)
+            peak = self.engine.metrics.get("concurrent_windows_peak", 0)
+            if len(self._inflight) > peak:
+                self.engine.metrics["concurrent_windows_peak"] = len(self._inflight)
+        except Exception:                        # noqa: BLE001
+            pass
 
-        async def _run() -> bytes:
-            try:
-                data = await self._fetch(next_off)
-                self.engine.metrics["prefetch_bytes"] += len(data)
-                self._err_streak = 0
-                return data
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:                     # noqa: BLE001
-                self._on_prefetch_error(exc)
-                raise
-
-        self._prefetch_task = asyncio.get_event_loop().create_task(_run())
+    async def _fetch_window(self, wo: int) -> bytes:
+        try:
+            data = await self._fetch(wo)
+            # klaar → ready (geconsumeerd bij volgende read); cap ready
+            while len(self._ready) >= MAX_READY_WINDOWS:
+                old = min(self._ready)
+                self._m("speculative_bytes_wasted", len(self._ready.pop(old)))
+            self._ready[wo] = data
+            self._m("prefetch_bytes", len(data))
+            self._err_streak = 0
+            return data
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:                 # noqa: BLE001
+            self._inflight.pop(wo, None)
+            self._on_prefetch_error(exc)
+            raise
 
     def _on_prefetch_error(self, exc: Exception) -> None:
         self._err_streak += 1
-        self.engine.metrics["prefetch_errors"] += 1
-        if self.two_way and self._err_streak >= self.fallback_after_errors:
-            # FASE 12: adaptive fallback — 2-way presteert slechter, terug
-            # naar single-stream voor deze sessie
+        self._m("prefetch_errors")
+        if self._err_streak >= self.fallback_after_errors:
+            # adaptive fallback — parallel schaalt niet, terug naar single
+            self.recovery = False
             self.two_way = False
-            self.engine.metrics["adaptive_fallbacks"] = (
-                self.engine.metrics.get("adaptive_fallbacks", 0) + 1)
+            self._m("adaptive_fallbacks")
             log.info("adaptive fallback naar single-stream %s: %r",
                      self.source_id[:12], exc)
 
@@ -200,6 +335,5 @@ class AdaptiveRangeReader:
             self._err_streak = 0
             return data
         except Exception:
-            # een synchrone fetch-fout telt ook mee voor de fallback-guard
             self._on_prefetch_error(RuntimeError("sync fetch failed"))
             raise

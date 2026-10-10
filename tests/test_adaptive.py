@@ -211,14 +211,14 @@ def test_09_seek_cancels_stale_prefetch():
 
     async def run():
         await rd.read(0, 48 * 1024)
-        task = rd._prefetch_task
-        assert task is not None and not task.done()
+        assert rd._inflight, "vers-open escalatie: prefetch onderweg"
+        task = next(iter(rd._inflight.values()))
         # ver seek: ver voorbij het prefetch-window
         data = await rd.read(1500 * 1024, 48 * 1024)
         assert data == payload[1500 * 1024:1500 * 1024 + 48 * 1024]
         await asyncio.sleep(0)  # laat de loop de cancel verwerken
         assert task.cancelled() or task.done()   # gecanceld óf al klaar (geen leak)
-        assert rd._prefetch_task is None or rd._prefetch_off != 256 * 1024
+        assert all(w != 256 * 1024 for w in rd._inflight)
 
     asyncio.run(run())
 
@@ -232,10 +232,10 @@ def test_10_stop_cancels_prefetch_no_leak():
 
     async def run():
         await rd.read(0, 48 * 1024)
-        assert rd._prefetch_task is not None
+        assert rd._inflight, "vers-open escalatie: prefetch onderweg"
         rd.close()
-        assert rd._prefetch_task is None
-        assert rd._prefetch_off is None
+        assert not rd._inflight
+        assert not rd._ready
         assert rd._buf == b""
     asyncio.run(run())
 
@@ -248,18 +248,14 @@ def test_11_429_burst_triggers_fallback_to_single():
                              two_way=True, fallback_after_errors=2)
 
     async def run():
-        await rd.read(0, 48 * 1024)             # start prefetch die faalt
-        try:
-            await rd._prefetch_task
+        await rd.read(0, 48 * 1024)             # W0 fetch + W1 prefetch (faalt)
+        await rd.read(48 * 1024, 48 * 1024)     # hit W0 → W1 opnieuw gefetcht
+        try:                                    # (2e fout → fallback)
+            await rd.read(256 * 1024, 48 * 1024)
+            assert False, "prefetch-zone faalt"
         except Exception:
             pass
-        await rd.read(0, 48 * 1024)             # hit in buffer; nieuwe prefetch
-        try:
-            if rd._prefetch_task:
-                await rd._prefetch_task
-        except Exception:
-            pass
-        # tweede fout → fallback
+        # tweede fout → fallback naar single
         assert rd.two_way is False
         assert eng.metrics["adaptive_fallbacks"] == 1
 
