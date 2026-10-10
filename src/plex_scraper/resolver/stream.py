@@ -37,6 +37,14 @@ class AdaptiveRangeReader:
         self._prefetch_task: asyncio.Task | None = None
         self._err_streak = 0
         self.closed = False
+        # read-ahead-escalatie (incident Pirates 2026-10-10): een consument
+        # met kleine sequentiële reads (Plex FUSE: 32 KiB) zonder read-ahead
+        # levert 9–14 Mbit i.p.v. 37,5+ — de serialisatie tussen windows
+        # (alleen het VOLGENDE window ophalen als two_way aan staat) wordt
+        # dynamisch opgeheven zodra het patroon zichzelf bewijst
+        self._last_end = -1
+        self._seq_small = 0
+        self._escalated = False
 
     # ------------------------------------------------------------ public
     async def read(self, offset: int, length: int) -> bytes:
@@ -50,6 +58,7 @@ class AdaptiveRangeReader:
         if self._buf_off <= offset < self._buf_off + len(self._buf):
             data = self._buf[offset - self._buf_off:]
             if len(data) >= length:
+                self._track_sequential(offset, length)
                 self._maybe_prefetch(offset)
                 return data[:length]
 
@@ -69,10 +78,12 @@ class AdaptiveRangeReader:
             if data:
                 self._buf_off, self._buf = off, data
                 self._err_streak = 0
+                self._track_sequential(offset, length)
                 self._maybe_prefetch(offset)
                 return data[offset - self._buf_off:][:length]
 
         # 3) miss: stale prefetch opruimen en synchroon fetchen
+        self._track_sequential(offset, length, miss=True)
         self._clear_prefetch()
         data = await self._fetch(offset)
         self._buf_off, self._buf = offset, data
@@ -87,6 +98,40 @@ class AdaptiveRangeReader:
         self._buf_off = -1
 
     # ----------------------------------------------------------- internals
+    def _track_sequential(self, offset: int, length: int,
+                          miss: bool = False) -> None:
+        """Escalatie-guard: kleine sequentiële reads (FUSE-consument) zonder
+        read-ahead → schakel prefetch in na N bevestigde hits. Seeks/grote
+        of random reads resetten de teller — geen runaway overfetch."""
+        if miss:
+            # miss op direct-opvolgend offset is alsnog sequentieel gedrag
+            if self._last_end >= 0 and offset == self._last_end \
+                    and length <= self._escalate_max_len():
+                self._seq_small += 1
+            else:
+                self._seq_small = 0
+        else:
+            if (offset == self._last_end
+                    and length <= self._escalate_max_len()):
+                self._seq_small += 1
+            else:
+                self._seq_small = 0
+        self._last_end = offset + length
+        if (not self.two_way and not self._escalated
+                and self._seq_small >= self._escalate_after()):
+            self.two_way = True
+            self._escalated = True
+            self.engine.metrics["readahead_escalations"] += 1
+            self._maybe_prefetch(offset)
+
+    def _escalate_after(self) -> int:
+        s = getattr(self.engine, "s", None)
+        return max(1, int(getattr(s, "stream_seq_escalate_after", 6)))
+
+    def _escalate_max_len(self) -> int:
+        s = getattr(self.engine, "s", None)
+        return max(1024, int(getattr(s, "stream_seq_escalate_max_len", 131072)))
+
     def _clear_prefetch(self) -> None:
         if self._prefetch_task is not None:
             self._prefetch_task.cancel()

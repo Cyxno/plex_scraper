@@ -71,6 +71,10 @@ class Settings:
     mig_db_path: str = "/mnt/user/appdata/plex-scraper/migration/migration-state.sqlite"
     resolver_url: str = "http://127.0.0.1:8282"
     stream_readahead_bytes: int = 8388608
+    # read-ahead-escalatie: kleine sequentiële FUSE-reads (Plex 32 KiB)
+    # zonder prefetch → na N opeenvolgende hits prefetch inschakelen
+    stream_seq_escalate_after: int = 6
+    stream_seq_escalate_max_len: int = 131072
 
     # state machine budgets
     # TorBox-cap is 60 uncached adds/uur account-breed; 3 begrensde adds per
@@ -201,6 +205,8 @@ class Settings:
             mig_db_path=os.environ.get("MIG_DB", cls.mig_db_path),
             resolver_url=os.environ.get("RESOLVER_URL", cls.resolver_url),
             stream_readahead_bytes=_int("STREAM_READAHEAD_BYTES", cls.stream_readahead_bytes),
+            stream_seq_escalate_after=_int("STREAM_SEQ_ESCALATE_AFTER", cls.stream_seq_escalate_after),
+            stream_seq_escalate_max_len=_int("STREAM_SEQ_ESCALATE_MAX_LEN", cls.stream_seq_escalate_max_len),
             torrent_ready_poll_interval=float(
                 os.environ.get("TORBOX_POLL_INTERVAL", cls.torrent_ready_poll_interval)
             ),
