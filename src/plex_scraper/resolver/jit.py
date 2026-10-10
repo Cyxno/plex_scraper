@@ -96,6 +96,72 @@ def current_severity(mbit: float, required: float, cfg) -> str:
     return "SEVERELY_DEGRADED"
 
 
+def qualify_candidate(samples: list[float], ttfb_s: float | None,
+                      required: float, current_mbit: float, cfg,
+                      rescue: float, rescue_mode: bool) -> tuple[str, dict, str]:
+    """Switch-hardening (incident Pirates 2026-10-09): een candidate wordt
+    gekwalificeerd op DUURZAME doorvoer, niet op één piek.
+
+    Bewezen faalpatroon: samples 9,1 / 97,9 / 10,0 mbit bij required 37,5 —
+    de piek (97,9) werd geaccepteerd, de bron hield 37,5 niet vol en de
+    client bleef iedere ~30 s bufferen.
+
+    Retourneert (verdict, stats, reason) met verdict:
+      IDEAL | ACCEPTABLE_RESCUE | UNSTABLE | INSUFFICIENT
+    """
+    vals = sorted(s for s in (samples or []) if s and s > 0)
+    stats = {"samples": [round(v, 1) for v in vals], "median": 0.0,
+             "p25": 0.0, "cv": None, "ttfb_s": ttfb_s}
+    if not vals:
+        return "INSUFFICIENT", stats, "geen geldige samples"
+    median = vals[len(vals) // 2]
+    p25 = vals[max(0, int(round((len(vals) - 1) * 0.25)))]
+    mean = sum(vals) / len(vals)
+    var = sum((v - mean) ** 2 for v in vals) / len(vals)
+    cv = (var ** 0.5) / median if median > 0 else None
+    vmax = vals[-1]
+    stats.update({"median": round(median, 1), "p25": round(p25, 1),
+                  "cv": round(cv, 2) if cv is not None else None,
+                  "max": round(vmax, 1)})
+
+    # drempel: normaal required (= bitrate × playback_margin, bevat al
+    # headroom); in rescue (SEVERELY_DEGRADED/STARTUP_FAILED) geldt de
+    # rescue-drempel — géén gestapelde marges, consistent met FASE-policy
+    threshold = rescue if rescue_mode else required
+
+    # 1) first-byte-consistentie: een trage ttfb is sowieso geen verbetering
+    if ttfb_s is not None and ttfb_s > cfg.ttfb_max_s:
+        return "UNSTABLE", stats, f"ttfb {ttfb_s:.1f}s > max {cfg.ttfb_max_s:.1f}s"
+    # 2) duurzaamheid: de median moet de drempel × headroom volhouden
+    #    (rescue: alleen boven de rescue-drempel — geen dubbele marge)
+    headroom = cfg.candidate_headroom if not rescue_mode \
+        else cfg.candidate_headroom_rescue
+    if median < threshold * headroom:
+        return ("UNSTABLE", stats,
+                f"median {median:.1f} < threshold {threshold:.1f} "
+                f"× headroom {headroom}")
+    # 3) floor: zelfs de slechtste kwartiel moet realtime kunnen suspporten
+    if p25 < threshold * cfg.candidate_p25_ratio:
+        return ("UNSTABLE", stats,
+                f"p25 {p25:.1f} < threshold {threshold:.1f}")
+    # 4) variance/spike-guard: één uitschieter maakt het gemiddelde leugenachtig
+    if cv is not None and cv > cfg.candidate_max_cv:
+        return "UNSTABLE", stats, f"cv {cv:.2f} > max {cfg.candidate_max_cv}"
+    if len(vals) >= 3 and vmax > median * cfg.candidate_max_spike:
+        return ("UNSTABLE", stats,
+                f"spike {vmax:.1f} > median {median:.1f} "
+                f"× {cfg.candidate_max_spike}")
+
+    # 5) relatief: aantoonbaar beter dan de CURRENT source (geen churn)
+    if median / max(current_mbit, 0.1) < cfg.min_gain:
+        return ("INSUFFICIENT", stats,
+                f"median {median:.1f} < current {current_mbit:.1f} "
+                f"× min_gain {cfg.min_gain}")
+    if rescue_mode and median < required:
+        return "ACCEPTABLE_RESCUE", stats, "OK"
+    return "IDEAL", stats, "OK"
+
+
 @dataclass
 class JitDecision:
     band: str                       # FAST | MARGINAL | DEGRADED
@@ -131,6 +197,15 @@ class JitConfig:
     confirm_cached_fast: bool = True
     hot_spare: bool = True               # FASE 18: playback-scoped link-prewarm
     delivery_bad_ttl_s: float = 3600.0      # FASE 13
+    # --- switch-hardening (incident Pirates 2026-10-09) ---
+    # Een source-switch mag nooit werkende playback slechter maken.
+    candidate_samples: int = 3           # meerdere throughput-samples per candidate
+    candidate_headroom: float = 1.4      # median >= required × headroom
+    candidate_headroom_rescue: float = 1.0   # rescue: median >= rescue-drempel
+    candidate_p25_ratio: float = 1.0     # p25 >= required × ratio (floor)
+    candidate_max_cv: float = 0.5        # stdev/median plafond (variance-guard)
+    candidate_max_spike: float = 4.0     # max > median × spike → UNSTABLE
+    require_stable_candidate: bool = True
 
 
 class JitController:
@@ -406,14 +481,15 @@ class JitController:
                                          hash=cand.info_hash, name=cand.torrent_name,
                                          mbit=probe["mbit"], ttfb_s=probe.get("ttfb_s"),
                                          relation=relation, file_id=probe.get("file_id"),
-                                         file_size=probe.get("file_size"))
-                # POLICY-PASS early-exit: bij SEVERELY_DEGRADED current is de
-                # eerste geverifieerde same/minor-class candidate die
-                # ≥ required én duidelijk beter is direct de winnaar
+                                         file_size=probe.get("file_size"),
+                                         samples=probe.get("samples"))
+                # POLICY-PASS early-exit alleen bij een AANTOONBAAR stabiele
+                # candidate (duurzame throughput boven required) — een piek
+                # volstaat niet meer (switch-hardening 2026-10-09)
                 if (decision.severity == "SEVERELY_DEGRADED"
-                        and self._candidate_sufficient(probe["mbit"],
-                                                       decision.measured_mbit,
-                                                       required_mbit)):
+                        and self._qualify(probe, decision.measured_mbit,
+                                          required_mbit)[0] in ("IDEAL",
+                                                                "ACCEPTABLE_RESCUE")):
                     break
 
             if not probed:
@@ -423,25 +499,38 @@ class JitController:
                 decision.note = "no equally-good faster source found"
                 return False
 
-            # POLICY-PASS: `required = bitrate × playback_margin` is DE
-            # playback-drempel en bevat al de headroom — daar komt géén
-            # tweede candidate-marge (geen required × fast_ratio) bovenop.
+            # switch-hardening: kies de beste candidate die zowel stabiel als
+            # aantoonbaar beter is; een onstabiele/snellere-op-piek candidate
+            # wordt geweigerd (event) en de current source behouden
             probed.sort(key=lambda t: t[0], reverse=True)
-            best_mbit, best_cand, best_probe = probed[0]
-            verdict = self._candidate_verdict(best_mbit, decision.measured_mbit,
-                                              ideal_mbit, self._rescue_mbit,
-                                              rescue_ok=self._rescue_mode)
-            if verdict == "ACCEPTABLE_RESCUE":
-                await self.resolver._evt("candidate_rescue_acceptable", item=item,
-                                         mbit=best_mbit, rescue_mbit=round(self._rescue_mbit, 1),
-                                         ideal_mbit=round(ideal_mbit, 1))
-            if verdict == "INSUFFICIENT":
+            chosen = None
+            for best_mbit, best_cand, best_probe in probed:
+                verdict, stats, why = self._qualify(
+                    best_probe, decision.measured_mbit, required_mbit)
+                if verdict in ("IDEAL", "ACCEPTABLE_RESCUE"):
+                    if verdict == "ACCEPTABLE_RESCUE":
+                        await self.resolver._evt(
+                            "candidate_rescue_acceptable", item=item,
+                            mbit=best_mbit, rescue_mbit=round(self._rescue_mbit, 1),
+                            ideal_mbit=round(ideal_mbit, 1))
+                    chosen = (best_cand, best_mbit, best_probe, verdict, stats)
+                    break
+                self.metrics[f"jit_candidate_{verdict.lower()}"] += 1
+                await self.resolver._evt(
+                    "jit_candidate_rejected_unstable" if verdict == "UNSTABLE"
+                    else "jit_candidate_rejected_insufficient",
+                    item=item, hash=src_info_hash(best_cand),
+                    name=getattr(best_cand, "torrent_name", "")[:90],
+                    reason=why, **{k: v for k, v in stats.items()})
+            if chosen is None:
                 self.metrics["jit_no_equivalent_source"] += 1
                 await self.resolver._evt("jit_no_equivalent_source", item=item,
-                                         best_mbit=best_mbit,
-                                         required_mbit=round(required_mbit, 1))
-                decision.note = "best alternative insufficient"
+                                         best_mbit=probed[0][0],
+                                         required_mbit=round(required_mbit, 1),
+                                         reason="geen stabiele candidate")
+                decision.note = "no stable faster source found; current retained"
                 return False
+            best_cand, best_mbit, best_probe, verdict, stats = chosen
 
             switched = await self._activate(item, current, best_cand, best_mbit)
             if switched:
@@ -462,8 +551,17 @@ class JitController:
             self._inflight.discard(item.plex_path)
 
     async def _activate(self, item, current, cand, cand_mbit: float) -> bool:
-        """FASE 12: atomic switch — B geverifieerd, dan A→B in één stap;
-        A krijgt delivery_bad_until (niet permanent bad)."""
+        """FASE 12 + switch-hardening (2026-10-09): veilige volgorde —
+
+        1. source-row verifiëren/bouwen (candidate volledig geverifieerd);
+        2. PRE-COMMIT: Plex ratingKey betrouwbaar resolven — lukt dat niet
+           (rating_key_not_found) dan wordt de switch GEABORTEERD en blijft
+           de oude bron + actieve sessie intact (geen generation bump, geen
+           delivery_bad, geen dead-handle window);
+        3. COMMIT: atomisch A→B activeren, daarna pas de oude bron
+           delivery_bad markeren;
+        4. POST-COMMIT: gerichte metadata-revalidatie queued (faalveilig).
+        """
         from plex_scraper.common.domain import models as m
         src = (await self.resolver.store.list_sources(item.id)
                and next((s for s in await self.resolver.store.list_sources(item.id)
@@ -472,17 +570,68 @@ class JitController:
             # bouw source-row via de normale validatie (probe + pick_file)
             validated = await self.resolver._validate_candidate(item, cand)
             if validated is None:
+                await self.resolver._evt("jit_switch_aborted", item=item,
+                                         hash=src_info_hash(cand),
+                                         reason="candidate_validatie_mislukt")
                 return False
             src = validated
+
+        # PRE-COMMIT ratingKey-check: kan Plex het item (nog) niet resolven,
+        # dan mislukt de post-commit revalidatie sowieso en blijft de client
+        # op een dode metadata-link hangen (bewezen bij Pirates) — abort.
+        reval = getattr(self.resolver, "_revalidator", None)
+        plex = getattr(self.resolver, "plex", None)
+        if reval is not None and plex is not None:
+            try:
+                rk = await plex.find_rating_key_by_path(item.plex_path)
+            except Exception as exc:                # noqa: BLE001
+                rk = None
+                await self.resolver._evt("jit_switch_precheck_error", item=item,
+                                         error=repr(exc)[:120])
+            if not rk:
+                self.metrics["jit_switch_aborted_ratingkey"] += 1
+                await self.resolver._evt("jit_switch_aborted", item=item,
+                                         old_hash=src_info_hash(current),
+                                         hash=src_info_hash(cand),
+                                         reason="rating_key_not_found",
+                                         action="old_source_retained")
+                return False
+
         previous = await self.resolver._active_source(item.id)
+        try:
+            await self.resolver._activate(item, src, previous, reason="jit_failover")
+        except Exception as exc:                    # noqa: BLE001
+            # commit mislukt → oude bron blijft actief, GEEN generation bump
+            self.metrics["jit_switch_commit_failed"] += 1
+            await self.resolver._evt("jit_switch_aborted", item=item,
+                                     old_hash=src_info_hash(current),
+                                     hash=src_info_hash(cand),
+                                     reason=f"commit_failed: {exc!r}"[:120],
+                                     action="old_source_retained")
+            return False
         if previous is not None:
+            # pas ná een geslaagde commit: de oude bron mag nooit als bad
+            # staan terwijl hij nog de actieve bron is
             previous.delivery_bad_until = m.now() + self.cfg.delivery_bad_ttl_s
             await self.resolver.store.update_source(previous)
             self.metrics["delivery_bad_ttl_count"] += 1
-        await self.resolver._activate(item, src, previous, reason="jit_failover")
         await self.resolver._evt("jit_completed", item=item,
                                  hash=src_info_hash(src), mbit=cand_mbit)
         return True
+
+    def _qualify(self, probe: dict, current_mbit: float,
+                 required_mbit: float) -> tuple[str, dict, str]:
+        """Stabiliteits-guard rond qualify_candidate (switch-hardening).
+
+        Legacy-probes (zonder samples-lijst, bijv. tests/anders) worden
+        behandeld als twee consistente samples van de gemeten waarde —
+        productie-probes leveren altijd meerdere samples."""
+        samples = probe.get("samples")
+        if not samples:
+            samples = [probe.get("mbit", 0.0), probe.get("mbit", 0.0)]
+        return qualify_candidate(samples, probe.get("ttfb_s"), required_mbit,
+                                 current_mbit, self.cfg, self._rescue_mbit,
+                                 getattr(self, "_rescue_mode", False))
 
     def _thresholds(self, item, current, required: float) -> tuple[float, float]:
         """(DEEL A) ideal_target = required (= bitrate × playback_margin);
@@ -599,16 +748,21 @@ class JitController:
                                          reason="gekozen file is geen videofile")
                 return None
             url = await self.resolver.provider.get_stream_url(torrent.torrent_id, fid)
-            # samples: 0 en het midden van de GEKOZEN file — cand.size is de
-            # torrent-totaalgrootte en zegt niets over díe file; clamp binnen
-            # de file-grenzen zodat een range nooit voorbij EOF kan
-            mid = max(0, min(fsize // 2, fsize - MB)) if fsize > MB else 0
-            offsets = sorted({0, mid})
+            # samples: meerdere offsets over de GEKOZEN file (0, kwart, midden)
+            # — een switch-beslissing mag nooit op één sample vallen (switch-
+            # hardening 2026-10-09); clamp binnen de file-grenzen zodat een
+            # range nooit voorbij EOF kan
+            span = max(1, self.cfg.candidate_samples)
+            offsets = sorted({min(fsize - MB if fsize > MB else 0,
+                                  int(fsize * f) // 1)
+                              for f in (0.0, 0.25, 0.5)[:span]})
+            offsets = [max(0, o) for o in offsets]
             await self.resolver._evt("jit_probe_file_selected", item=item,
                                      hash=src_info_hash(cand), file_id=fid,
                                      file_name=fname[:90], file_size=fsize,
                                      offsets=offsets)
             samples: list[float] = []
+            ttfbs: list[float] = []
             failures: list[str] = []
             for off in offsets:
                 t0 = time.monotonic()
@@ -619,6 +773,7 @@ class JitController:
                     continue
                 dt = max(time.monotonic() - t0, 1e-6)
                 samples.append(len(data) * 8 / 1e6 / dt)
+                ttfbs.append(dt)
             if not samples:
                 await self.resolver._evt("jit_candidate_probe_error", item=item,
                                          hash=src_info_hash(cand), file_id=fid,
@@ -629,7 +784,11 @@ class JitController:
                 await self.resolver._evt("jit_probe_sample_degraded", item=item,
                                          hash=src_info_hash(cand),
                                          failures="; ".join(failures)[:160])
-            return {"mbit": round(min(samples), 1), "ttfb_s": None,
+            vals = sorted(samples)
+            median = vals[len(vals) // 2]
+            return {"mbit": round(median, 1),
+                    "samples": [round(v, 1) for v in samples],
+                    "ttfb_s": round(max(ttfbs), 2) if ttfbs else None,
                     "file_id": fid, "file_size": fsize}
         except Exception as exc:                        # noqa: BLE001
             await self.resolver._evt("jit_candidate_probe_error", item=item,

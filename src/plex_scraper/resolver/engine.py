@@ -1020,19 +1020,34 @@ class Resolver:
             await self._evt("runtime_failover_failed", item=item,
                             error=repr(exc)[:120])
             return
-        if ok:
-            self.runtime_metrics["runtime_failover_success"] += 1
-            await self._evt("runtime_reconnect_requested", item=item,
-                            reason="delivery degraded, new source active")
-            # gecontroleerde reconnect: sessies van dit item sluiten →
-            # FUSE read → EIO → Plex heropent (zelfde ratingKey/timeline)
-            if getattr(self.s, "jit_reconnect_on_failover", True):
-                for hdl, other in list(self.sessions.items()):
-                    if other.session.media_item_id == item.id:
-                        try:
-                            await self.release(hdl)
-                        except Exception:           # noqa: BLE001
-                            pass
+        if not ok:
+            # switch-hardening: geen stabiel betere candidate → current blijft
+            # actief. Herhaald bufferen (~30s-cadans) blijft de monitor melden
+            # en de failover-budget limiert de zoekacties — geen switch-storm,
+            # maar wel observability dat de runtime-bron gedegradeerd is.
+            self.runtime_metrics["runtime_switch_declined"] = (
+                self.runtime_metrics.get("runtime_switch_declined", 0) + 1)
+            await self._evt("runtime_switch_declined", item=item,
+                            reason=getattr(decision, "note", "") or
+                            "geen stabiele candidate; current behouden",
+                            rolling_mbit=snap.get("rolling_mbit"))
+            return
+        self.runtime_metrics["runtime_failover_success"] = (
+            self.runtime_metrics.get("runtime_failover_success", 0) + 1)
+        await self._evt("runtime_reconnect_requested", item=item,
+                        reason="delivery degraded, new source active")
+        # gecontroleerde reconnect: sessies van dit item sluiten →
+        # FUSE read → EIO → Plex heropent (zelfde ratingKey/timeline).
+        # Gebeurt ALLÉÉN na een geslaagde, stabiele switch — de pre-commit
+        # guards in jit._activate garanderen dat de nieuwe source open/read-
+        # baar is én dat Plex' ratingKey nog resolvbaar is.
+        if getattr(self.s, "jit_reconnect_on_failover", True):
+            for hdl, other in list(self.sessions.items()):
+                if other.session.media_item_id == item.id:
+                    try:
+                        await self.release(hdl)
+                    except Exception:               # noqa: BLE001
+                        pass
 
     async def release(self, handle: str) -> None:
         ctx = self.sessions.pop(handle, None)

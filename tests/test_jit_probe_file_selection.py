@@ -177,7 +177,7 @@ async def test_multi_file_nfo_at_id0_video_at_id2_probe_targets_video():
     vsize = LANTERNS_FILES[FLUX_HASH][2]["size"]
     offsets = next(e["offsets"] for e in r.events if e["kind"] == "jit_probe_file_selected")
     assert all(off + MB <= vsize for off in offsets)   # nooit voorbij de video
-    assert offsets == [0, vsize // 2]                  # midden van de GEKOZEN file
+    assert offsets == [0, vsize // 4, vsize // 2]       # 3 samples over de GEKOZEN file
     # het oude foute offset (torrent-size//2) mag niet meer voorkomen
     assert TORRENT_SIZES[FLUX_HASH] // 2 not in [off for _, off in provider.reads]
     assert not any(e["kind"] == "jit_probe_file_unusable" for e in r.events)
@@ -238,7 +238,7 @@ async def test_probe_offsets_clamped_within_chosen_file():
     assert probe is not None and probe["file_id"] == 2
     vsize = LANTERNS_FILES[HMAX_HASH][2]["size"]
     offsets = next(e["offsets"] for e in r.events if e["kind"] == "jit_probe_file_selected")
-    assert offsets == [0, min(vsize // 2, vsize - MB)]
+    assert offsets[:1] == [0] and offsets[-1] == min(vsize // 2, vsize - MB)
     assert max(off for _, off in provider.reads) + MB <= vsize
 
 
