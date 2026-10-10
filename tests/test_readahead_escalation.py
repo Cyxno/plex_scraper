@@ -108,8 +108,10 @@ def test_03_seek_annuleert_stale_prefetch():
     asyncio.run(go())
 
 
-def test_04_random_reads_geen_escalatie():
-    """(4) random reads → teller reset telkens, two_way blijft uit."""
+def test_04_random_reads_geen_overfetch():
+    """(4) random reads: de fresh-open-escalatie vuurt één keer (ffmpeg-open
+    is een probe), maar random seeks cancelen de prefetch telkens — geen
+    runaway overfetch, requests gebonden aan reads."""
     eng = FakeEngine(latency_s=0.0)
     r = _reader(eng)
 
@@ -120,8 +122,10 @@ def test_04_random_reads_geen_escalatie():
             await r.read(o, 32 * KIB)
             await r.read(o + 32 * KIB, 32 * KIB)
     asyncio.run(go())
-    assert r.two_way is False
-    assert eng.metrics.get("readahead_escalations", 0) == 0
+    assert eng.metrics.get("readahead_escalations", 0) == 1   # alleen fresh-open
+    # gebonden: hooguit 1 fetch + 1 gecancelde prefetch per read
+    assert len(eng.requests) <= 2 * 8 * 2   # 8 random seeks, gebonden
+    assert eng.metrics["prefetch_cancelled_bytes"] > 0        # seeks cancelen
 
 
 def test_05_hoge_cdn_latentie_geen_per_read_bottleneck():

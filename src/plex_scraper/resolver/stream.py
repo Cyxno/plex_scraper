@@ -83,10 +83,20 @@ class AdaptiveRangeReader:
                 return data[offset - self._buf_off:][:length]
 
         # 3) miss: stale prefetch opruimen en synchroon fetchen
+        fresh_session = self._last_end == -1
         self._track_sequential(offset, length, miss=True)
         self._clear_prefetch()
         data = await self._fetch(offset)
         self._buf_off, self._buf = offset, data
+        if fresh_session and not self.two_way:
+            # seek-startup-optimalisatie (incident Pirates 19:50 CEST): een
+            # verse ffmpeg-open is per definitie een sequentiële probe —
+            # start het tweede window meteen, i.p.v. na 6 hits. Eén extra
+            # 8 MiB window, cancelbaar, geheugen blijft gebonden (2 windows).
+            self.two_way = True
+            self._escalated = True
+            self.engine.metrics["readahead_escalations"] = (
+                self.engine.metrics.get("readahead_escalations", 0) + 1)
         self._maybe_prefetch(offset)
         return data[:length]
 

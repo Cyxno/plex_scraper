@@ -107,7 +107,8 @@ class StubResolver:
     def __init__(self, provider, sources):
         self.provider = provider
         self.store = SimpleNamespace(list_sources=self._list_sources,
-                                     update_source=self._update_source)
+                                     update_source=self._update_source,
+                                     update_runtime=self._update_source)
         self.caches = CacheSet(1800, 600, 900)
         self.events: list[dict] = []
         self._sources = sources
@@ -126,6 +127,21 @@ class StubResolver:
     async def _evt(self, kind, item=None, **payload):
         self.events.append({"kind": kind, **payload})
 
+    class _Reval:
+        async def resolve_rating_key(self, item):
+            return 123, "test"
+
+        def queue(self, item, gen, reasons, force=False):
+            return SimpleNamespace(state="queued")
+
+        async def wait_for_coherent(self, item_id, timeout):
+            return {"waited": True,
+                    "state": "plex_metadata_revalidation_succeeded"}
+
+    @property
+    def _revalidator(self):
+        return self._Reval()
+
     async def _gather_candidates(self, item):
         return list(self.candidates)
 
@@ -134,10 +150,18 @@ class StubResolver:
 
     async def _validate_candidate(self, item, cand):
         return SimpleNamespace(id="newsrc", media_item_id=item.id,
-                               info_hash=cand.info_hash, state="active")
+                               info_hash=cand.info_hash, state="active",
+                               size=6550605678, codec="hevc",
+                               resolution="2160p", hdr="dolby_vision",
+                               audio="eac3", file_name="x.mkv",
+                               generation=1)
 
     async def _activate(self, item, src, previous, reason=""):
         self.activated = (item.id, src.info_hash)
+
+    async def close_item_sessions(self, item_id):
+        self.closed_sessions = getattr(self, "closed_sessions", 0) + 1
+        return 0
 
     def event_kinds(self):
         return [e["kind"] for e in self.events]
@@ -146,14 +170,16 @@ class StubResolver:
 def _mk_item():
     return SimpleNamespace(id="f74db00b93", plex_path="/x/Lanterns S01E08.mkv",
                            kind="episode", title="Dirt and Stars", series="Lanterns",
-                           season=1, episode=8, year=None)
+                           season=1, episode=8, year=None, generation=1)
 
 
 def _mk_current():
     return SimpleNamespace(
         id="src-cur", info_hash="f56df75335ee7d00c1eea36e9574be5294e37ea3",
         torrent_name="Lanterns.S01E08.2160p.AMZN.WEB-DL.DV.HDR10+.DDP5.1.Atmos..H265.MP4-BTM",
-        size=6965991009, delivery_bad_until=0.0)
+        size=6965991009, delivery_bad_until=0.0,
+        codec="hevc", resolution="2160p", hdr="hdr10", audio="eac3",
+        file_name="Lanterns.S01E08.mkv", generation=1)
 
 
 def _mk_jit(provider, resolver):

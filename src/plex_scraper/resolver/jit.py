@@ -206,6 +206,7 @@ class JitConfig:
     candidate_max_cv: float = 0.5        # stdev/median plafond (variance-guard)
     candidate_max_spike: float = 4.0     # max > median × spike → UNSTABLE
     require_stable_candidate: bool = True
+    material_rebuild_wait_s: float = 30.0   # bounded metadata-rebuild bij material switch
 
 
 class JitController:
@@ -616,6 +617,16 @@ class JitController:
                 return False
 
         previous = await self.resolver._active_source(item.id)
+
+        # LAYOUT-COMPATIBILITEIT (incident Pirates 2026-10-10 19:50 CEST):
+        # een mid-session switch naar een inhoudelijk ánder bestand (REMUX →
+        # encode, size −51%) liet Plex een andere byte/stream-identiteit
+        # dienen onder hetzelfde stabiele pad; de eerste seek startte nieuwe
+        # ffmpeg-jobs en playback herstelde niet.
+        from plex_scraper.resolver.layout_compat import (
+            MATERIAL_LAYOUT_CHANGE, classify)
+        verdict, layout_reasons = classify(previous, src)
+
         try:
             await self.resolver._activate(item, src, previous, reason="jit_failover")
         except Exception as exc:                    # noqa: BLE001
@@ -633,9 +644,77 @@ class JitController:
             previous.delivery_bad_until = m.now() + self.cfg.delivery_bad_ttl_s
             await self.resolver.store.update_source(previous)
             self.metrics["delivery_bad_ttl_count"] += 1
+
+        # GECONTROLEERDE OVERGANG bij MATERIAL_LAYOUT_CHANGE: sessies dicht,
+        # Plex-metadata synchroon herbouwen (bounded) vóór bytes mogen
+        # vloeien; faalt de rebuild → rollback naar de oude bron.
+        if verdict == MATERIAL_LAYOUT_CHANGE:
+            await self.resolver._evt("jit_switch_material", item=item,
+                                     old_hash=src_info_hash(current),
+                                     hash=src_info_hash(cand),
+                                     reasons=";".join(layout_reasons)[:200])
+            if previous is not None and not await self._material_transition(
+                    item, previous, src, reval, layout_reasons):
+                return False
         await self.resolver._evt("jit_completed", item=item,
                                  hash=src_info_hash(src), mbit=cand_mbit)
         return True
+
+    async def _material_transition(self, item, previous, src, reval,
+                                   layout_reasons: list[str]) -> bool:
+        """Gecontroleerde overgang bij MATERIAL_LAYOUT_CHANGE:
+        1. alle sessies van het item sluiten (oude byte-identiteit dood);
+        2. Plex media_parts/streams synchroon herbouwen (bounded);
+        3. faalt dat → rollback naar de oude bron (identiteit behouden),
+           opnieuw analyseren, en de switch afbreken.
+        """
+        wait_s = float(getattr(self.cfg, "material_rebuild_wait_s", 30.0))
+        closer = getattr(self.resolver, "close_item_sessions", None)
+        if closer is not None:
+            try:
+                await closer(item.id)
+            except Exception as exc:                # noqa: BLE001
+                await self.resolver._evt("jit_switch_material_close_error",
+                                         item=item, error=repr(exc)[:120])
+        coherent = False
+        if reval is not None:
+            try:
+                reval.queue(item, item.generation,
+                            layout_reasons or ["material_layout_change"],
+                            force=True)
+                res = await reval.wait_for_coherent(item.id, wait_s)
+                coherent = res.get("state") == "plex_metadata_revalidation_succeeded"
+            except Exception as exc:                # noqa: BLE001
+                await self.resolver._evt("jit_switch_material_rebuild_error",
+                                         item=item, error=repr(exc)[:120])
+        if coherent:
+            self.metrics["jit_material_transitions"] = (
+                self.metrics.get("jit_material_transitions", 0) + 1)
+            await self.resolver._evt("jit_switch_material_coherent", item=item,
+                                     generation=item.generation)
+            return True
+        # rebuild faalde → rollback: oude bron terug actief, identiteit intact
+        self.metrics["jit_material_rollbacks"] = (
+            self.metrics.get("jit_material_rollbacks", 0) + 1)
+        await self.resolver._evt("jit_switch_aborted", item=item,
+                                 old_hash=src_info_hash(src),
+                                 hash=src_info_hash(previous),
+                                 reason="layout_rebuild_failed",
+                                 action="rolled_back_to_old_source")
+        try:
+            await self.resolver._activate(item, previous, src,
+                                          reason="layout_rollback")
+            item.generation = previous.generation
+            await self.resolver.store.update_runtime(item)
+            if reval is not None:
+                # metadata beschrijft nu de teruggewerkte bron; herstel
+                reval.queue(item, previous.generation,
+                            ["layout_rollback_rebuild"], force=True)
+                await reval.wait_for_coherent(item.id, wait_s)
+        except Exception as exc:                    # noqa: BLE001
+            await self.resolver._evt("jit_switch_rollback_error", item=item,
+                                     error=repr(exc)[:120])
+        return False
 
     def _qualify(self, probe: dict, current_mbit: float,
                  required_mbit: float) -> tuple[str, dict, str]:

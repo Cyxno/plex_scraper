@@ -221,11 +221,13 @@ class PlexRevalidator:
         return reasons
 
     def queue(self, item: m.MediaItem, target_generation: int,
-              reasons: list[str]) -> RevalJob:
-        """Één job per item; latest generation wins; cooldown-respect."""
+              reasons: list[str], force: bool = False) -> RevalJob:
+        """Één job per item; latest generation wins; cooldown-respect
+        (force=True: cooldown negeren — material-switch overgang)."""
         job = self._jobs.get(item.id)
         now = time.time()
-        cooldown = getattr(self.s, "plex_revalidation_cooldown_s", 120.0)
+        cooldown = 0.0 if force else getattr(
+            self.s, "plex_revalidation_cooldown_s", 120.0)
         if job is not None and job.state in (QUEUED, RUNNING):
             # coalesce: zelfde job schuift mee naar de nieuwste generatie
             job.target_generation = max(job.target_generation, target_generation)

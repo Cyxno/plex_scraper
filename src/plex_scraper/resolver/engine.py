@@ -745,6 +745,23 @@ class Resolver:
             actives = ([s for s in actives if s.id == keep_id] or actives[:1])
         return actives[0] if actives else None
 
+    async def close_item_sessions(self, item_id: str) -> int:
+        """Sluit alle open sessies van een item (material source transition):
+        de oude byte-identiteit is dood — de client moet opnieuw openen en
+        de nieuwe metadata/probe gebruiken; byte-offsets van de oude bron
+        worden niet voortgezet."""
+        handles = [h for h, ctx in list(self.sessions.items())
+                   if ctx.session.media_item_id == item_id]
+        for h in handles:
+            try:
+                await self.release(h)
+            except Exception:                   # noqa: BLE001
+                pass
+        if handles:
+            await self._evt("item_sessions_closed", item_id=item_id,
+                            count=len(handles))
+        return len(handles)
+
     # ------------------------------------------------------------ sessions
     def media_profile(self, item: m.MediaItem, size: int) -> m_prof.MediaProfile:
         """FASE 2/3: per-media throughput-profiel (bitrate + confidence)."""
