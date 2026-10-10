@@ -574,6 +574,10 @@ class IngestBridge:
         await self.store.add_event(
             "ingest_symlink_created", item_id=item.id, link=link,
             target=target[:160])
+        # plex-namespace-pad (autoritatief voor probes/scans/revalidator)
+        link_plex = delivery.to_plex_ns(
+            link, getattr(self.s, "symlink_root", ""),
+            getattr(self.s, "plex_symlink_root", "/symlinks"))
         # exact Plex-part-pad registreren bij de revalidator: de ratingKey-
         # lookup matcht dan op het échte part (symlink-releasenaam), niet op
         # de .ids-uuid die Plex nooit als part-filename draagt
@@ -589,9 +593,6 @@ class IngestBridge:
         # (/symlinks i.p.v. /mnt/vm_storage/symlinks) — probe in plex-ns.
         # Verse .ids-nodes materialiseren bovendien binnen enkele sec; de
         # begrensde retry vangt de overgang.
-        link_plex = delivery.to_plex_ns(
-            link, getattr(self.s, "symlink_root", ""),
-            getattr(self.s, "plex_symlink_root", "/symlinks"))
         await self._set_state(job, JobState.PLEX_REFRESH)
         probe: dict = {}
         probe_tries = max(int(getattr(self.s, "ingest_plex_probe_retries", 6)), 1)

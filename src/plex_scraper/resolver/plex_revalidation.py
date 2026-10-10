@@ -333,10 +333,18 @@ class PlexRevalidator:
                     10**6, 0.05 * source.size):
                 mm.append(f"size {source.size}->{info['size']}")
         exp_res = (source.resolution or "").lower()
-        if exp_res and info.get("height"):
-            want = {"2160p": 2160, "1080p": 1080, "720p": 720}.get(exp_res)
-            if want and abs(info["height"] - want) > 40:
-                mm.append(f"resolution {exp_res}->{info['height']}p")
+        if exp_res and (info.get("height") or info.get("width")):
+            # verwachte pixelmaten per resolutieklasse; Plex kan de crop-
+            # afmeting rapporteren (letterbox: 2160p → 3832x1600), dus een
+            # match op height ÓF width volstaat — een echte codec-wissel
+            # faalt op beide
+            want = {"2160p": (2160, 3840), "1080p": (1080, 1920),
+                    "720p": (720, 1280)}.get(exp_res)
+            if want:
+                h_ok = info.get("height") and abs(info["height"] - want[0]) <= 40
+                w_ok = info.get("width") and abs(info["width"] - want[1]) <= 60
+                if not (h_ok or w_ok):
+                    mm.append(f"resolution {exp_res}->{info.get('height')}p")
         if item.duration_s and info.get("duration_s"):
             if abs(info["duration_s"] - item.duration_s) > 0.1 * item.duration_s:
                 mm.append(f"duration {item.duration_s:.0f}->{info['duration_s']:.0f}")

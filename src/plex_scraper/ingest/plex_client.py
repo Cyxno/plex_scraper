@@ -125,7 +125,8 @@ class PlexExecClient:
         """Library-scan trigger (specifiek pad, of hele section)."""
         script = (
             "import json,sys,re,urllib.request\n"
-            "section = int(sys.argv[1]); path = sys.argv[2] or None\n"
+            "section, path = sys.argv[1].split('|', 1)\n"
+            "section = int(section); path = path or None\n"
             "tok = re.search(r'PlexOnlineToken=\"([^\"]+)\"',\n"
             "    open('/config/Plex Media Server/Preferences.xml').read()).group(1)\n"
             "url = f'http://127.0.0.1:32400/library/sections/{section}/refresh'\n"

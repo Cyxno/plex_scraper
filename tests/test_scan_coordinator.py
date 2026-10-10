@@ -205,3 +205,14 @@ def test_09_exec_error_dict_telt_als_faal():
     _run(c, go)
     assert len(plex.calls) == 2                # 1e poging faalde stil → retry
     assert SUCCEEDED in rec.kinds()
+
+
+def test_10_scan_section_script_parseert_combined_argv():
+    """Regressie (MobLand/SWAT stil-faal): _exec geeft 'section|path' als ÉÉN
+    argv-waarde — het exec-script moet die zelf splitsen, geen argv[2]
+    verwachten (die bestaat niet → IndexError → nooit een scan)."""
+    import inspect
+    from plex_scraper.ingest.plex_client import PlexExecClient
+    src = inspect.getsource(PlexExecClient.scan_section)
+    assert "split('|', 1)" in src
+    assert "sys.argv[2]" not in src
