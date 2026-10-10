@@ -100,10 +100,56 @@ class PlexRevalidator:
         self.s = settings
         self._jobs: dict[str, RevalJob] = {}
         self._last_done: dict[str, float] = {}     # item_id -> ts laatste OK
+        self._last_rk: dict[str, int] = {}         # item_id -> bekende ratingKey
+        self._part_paths: dict[str, str] = {}      # item_id -> exact plex-part-pad
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self.metrics = {"queued": 0, "succeeded": 0, "failed": 0,
                         "deduped": 0, "cooldown_skipped": 0}
+
+    # --------------------------------------------------- ratingKey-resolutie
+    def register_part_path(self, item_id: str, part_path: str) -> None:
+        """Registreer het exacte Plex-part-pad (symlink in plex-namespace)
+        zoals vastgesteld tijdens delivery — voorkeurslookup bij revalidatie."""
+        if part_path:
+            self._part_paths[item_id] = part_path
+
+    async def resolve_rating_key(self, item: m.MediaItem) -> tuple[int | None, str]:
+        """Betrouwbare ratingKey-resolutie voor een bestaand Plex-item,
+        zonder library-scan. Voorkeursvolgorde:
+          1. reeds bekende ratingKey uit eerdere succesvolle verificatie;
+          2. read-only DB-lookup op exact Plex media-part path (snel, exact);
+          3. HTTP part-lookup (exact pad, dan suffix; TV via allLeaves);
+          4. bounded retry voor Plex index/cache-lag — daarna (None, 'unresolved').
+        """
+        tries = max(1, int(getattr(self.s, "plex_revalidation_lookup_retries", 3)))
+        wait = float(getattr(self.s, "plex_revalidation_lookup_wait_s", 2.0))
+        exact = self._part_paths.get(item.id)
+        how = "cached"
+        for attempt in range(tries):
+            rk = self._last_rk.get(item.id)
+            if rk:
+                return rk, how
+            if exact:
+                db = getattr(self.plex, "find_rating_key_via_db", None)
+                if db is not None:
+                    try:
+                        rk = await db(exact)
+                    except Exception:               # noqa: BLE001
+                        rk = None
+                    if rk:
+                        return rk, "db_exact"
+                rk = await self.plex.find_rating_key_by_path(
+                    item.plex_path, exact_path=exact)
+                if rk:
+                    return rk, "exact_path"
+            rk = await self.plex.find_rating_key_by_path(item.plex_path)
+            if rk:
+                return rk, "suffix"
+            how = "unresolved"
+            if attempt < tries - 1:
+                await asyncio.sleep(wait)
+        return None, "unresolved"
 
     # ------------------------------------------------------------- trigger
     def on_swap(self, item: m.MediaItem, old: m.Source | None,
@@ -246,9 +292,14 @@ class PlexRevalidator:
                 break
         if source is None:
             return {"coherent": False, "error": "no active source"}
-        rk = await self.plex.find_rating_key_by_path(item.plex_path)
+        rk, how = await self.resolve_rating_key(item)
         if not rk:
-            return {"coherent": False, "error": "rating_key_not_found"}
+            # typed deferred: item bestaat vermoedelijk wél in Plex; lookup
+            # is tijdelijk onduidelijk. NOOIT een source-rollback, nooit een
+            # library-scan — een latere swap/revalidatie herprobeert.
+            return {"coherent": False, "error": "rating_key_unresolved",
+                    "deferred": True, "lookup": how}
+        self._last_rk[item.id] = rk
         ana = await self.plex.analyze_item(rk)
         if ana.get("error"):
             return {"coherent": False, "error": ana["error"][:120]}

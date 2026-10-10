@@ -574,6 +574,15 @@ class IngestBridge:
         await self.store.add_event(
             "ingest_symlink_created", item_id=item.id, link=link,
             target=target[:160])
+        # exact Plex-part-pad registreren bij de revalidator: de ratingKey-
+        # lookup matcht dan op het échte part (symlink-releasenaam), niet op
+        # de .ids-uuid die Plex nooit als part-filename draagt
+        reval = getattr(self.resolver, "_revalidator", None)
+        if reval is not None and link_plex:
+            try:
+                reval.register_part_path(item.id, link_plex)
+            except Exception:                       # noqa: BLE001
+                pass
 
         # canonical+symlink leesprobes in de PLEX-container (autoritatief).
         # De plex-container mount de symlink-tree onder een ANDERE prefix

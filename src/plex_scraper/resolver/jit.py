@@ -579,11 +579,12 @@ class JitController:
         # PRE-COMMIT ratingKey-check: kan Plex het item (nog) niet resolven,
         # dan mislukt de post-commit revalidatie sowieso en blijft de client
         # op een dode metadata-link hangen (bewezen bij Pirates) — abort.
+        # Resolutie volgt de revalidator-voorkeursvolgorde (bekende rk →
+        # exact part-pad → suffix → bounded retry) om valse aborts te voorkomen.
         reval = getattr(self.resolver, "_revalidator", None)
-        plex = getattr(self.resolver, "plex", None)
-        if reval is not None and plex is not None:
+        if reval is not None and hasattr(reval, "resolve_rating_key"):
             try:
-                rk = await plex.find_rating_key_by_path(item.plex_path)
+                rk, _how = await reval.resolve_rating_key(item)
             except Exception as exc:                # noqa: BLE001
                 rk = None
                 await self.resolver._evt("jit_switch_precheck_error", item=item,
@@ -593,7 +594,24 @@ class JitController:
                 await self.resolver._evt("jit_switch_aborted", item=item,
                                          old_hash=src_info_hash(current),
                                          hash=src_info_hash(cand),
-                                         reason="rating_key_not_found",
+                                         reason="rating_key_unresolved",
+                                         action="old_source_retained")
+                return False
+        elif getattr(self.resolver, "plex", None) is not None:
+            # fallback zonder revalidator-hulp: directe lookup
+            try:
+                rk = await self.resolver.plex.find_rating_key_by_path(
+                    item.plex_path)
+            except Exception as exc:                # noqa: BLE001
+                rk = None
+                await self.resolver._evt("jit_switch_precheck_error", item=item,
+                                         error=repr(exc)[:120])
+            if not rk:
+                self.metrics["jit_switch_aborted_ratingkey"] += 1
+                await self.resolver._evt("jit_switch_aborted", item=item,
+                                         old_hash=src_info_hash(current),
+                                         hash=src_info_hash(cand),
+                                         reason="rating_key_unresolved",
                                          action="old_source_retained")
                 return False
 

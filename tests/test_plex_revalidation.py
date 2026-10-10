@@ -219,7 +219,8 @@ def test_rating_key_not_found_is_failure_not_success():
     for _ in range(Settings.plex_revalidation_attempts):
         _run(r._process(job))
     assert job.state == FAILED
-    assert job.last_result["error"] == "rating_key_not_found"
+    assert job.last_result["error"] == "rating_key_unresolved"
+    assert job.last_result.get("deferred") is True
 
 
 # ------------------------------------------------------- dedupe/throttle

@@ -238,33 +238,91 @@ class PlexExecClient:
             "print(json.dumps(out))\n")
         return await self._exec(script, str(rating_key))
 
-    async def find_rating_key_by_path(self, plex_path: str) -> int | None:
+    async def find_rating_key_via_db(self, part_file: str) -> int | None:
+        """ratingKey via read-only SQLite-lookup op het exacte part-bestand.
+
+        ALLEEN-LEZEN (mode=ro): muteren van de Plex-DB blijft expliciet
+        verboden. Dit is de snelste exacte match (geen per-show traversal)
+        en valt weg bij een tijdelijke DB-lock — de HTTP-lookup is fallback.
+        """
+        script = (
+            "import json,sys,sqlite3\n"
+            "part = sys.argv[1]\n"
+            "P = '/config/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db'\n"
+            "out = {'rating_key': None}\n"
+            "try:\n"
+            "    db = sqlite3.connect(f'file:{P}?mode=ro', uri=True,\n"
+            "                         timeout=5.0)\n"
+            "    row = db.execute(\n"
+            "        'SELECT mi.metadata_item_id FROM media_parts mp '\n"
+            "        'JOIN media_items mi ON mi.id=mp.media_item_id '\n"
+            "        'WHERE mp.file = ? LIMIT 1', (part,)).fetchone()\n"
+            "    if row is None:\n"
+            "        row = db.execute(\n"
+            "            'SELECT mi.metadata_item_id FROM media_parts mp '\n"
+            "            'JOIN media_items mi ON mi.id=mp.media_item_id '\n"
+            "            'WHERE mp.file LIKE ? LIMIT 1', ('%'+part,)).fetchone()\n"
+            "    out['rating_key'] = row[0] if row else None\n"
+            "except Exception as e:\n"
+            "    out = {'rating_key': None, 'error': repr(e)[:120]}\n"
+            "print(json.dumps(out))\n")
+        return (await self._exec(script, part_file)).get("rating_key")
+
+    async def find_rating_key_by_path(self, plex_path: str,
+                                      exact_path: str | None = None) -> int | None:
         """ratingKey van het metadata-item dat dit part-bestand bezit.
 
         plex_path is ons stabiele VFS-pad (/mnt/remote/...); in Plex-namespace
         is dat /symlinks/... Zoekt in beide TV- en movie-sections.
+
+        Bewezen faalwijzen (incident 2026-10-09/10, 99 revalidaties faalden
+        hierop):
+          1. `/library/sections/N/all` geeft XML tenzij Accept: application/json
+             — zonder die header: JSONDecodeError → stilletjes None;
+          2. TV-sections geven op /all alléén shows; Media/Part zit in de
+             allLeaves per show — die worden hier meteen meegetraverseerd;
+          3. Plex-parts dragen de symlink-releasenaam, niet de .ids-uuid —
+             match daarom op exact part-pad (exact_path, voorkeur) óf op de
+             basename van een écht part-bestand.
         """
         script = (
-            "import json,sys,re,urllib.request,urllib.parse\n"
-            "suffix = sys.argv[1]\n"
+            "import json,sys,re,urllib.request\n"
+            "suffix, exact = sys.argv[1].split('|', 1)\n"
             "tok = re.search(r'PlexOnlineToken=\"([^\"]+)\"',\n"
             "    open('/config/Plex Media Server/Preferences.xml').read()).group(1)\n"
+            "H = {'Accept': 'application/json', 'X-Plex-Token': tok}\n"
+            "def leaves_parts(show_rk):\n"
+            "    u = f'http://127.0.0.1:32400/library/metadata/{show_rk}/allLeaves'\n"
+            "    try:\n"
+            "        return (json.loads(urllib.request.urlopen(\n"
+            "            urllib.request.Request(u, headers=H), timeout=60).read())\n"
+            "            ['MediaContainer'].get('Metadata') or [])\n"
+            "    except Exception:\n"
+            "        return []\n"
+            "def match(mds):\n"
+            "    for mt in mds:\n"
+            "        leaves = (mt.get('Media') and [mt]) or leaves_parts(mt['ratingKey'])\n"
+            "        for it in leaves:\n"
+            "            for med in it.get('Media') or []:\n"
+            "                for pt in med.get('Part') or []:\n"
+            "                    f = pt.get('file') or ''\n"
+            "                    if (exact and f == exact) or (suffix and f.endswith(suffix)):\n"
+            "                        # TV: leaf-ratingKey (episode), niet de show\n"
+            "                        return it.get('ratingKey') or mt['ratingKey']\n"
+            "    return None\n"
             "rk = None\n"
             "for section in (2, 1):\n"
             "    if rk: break\n"
             "    url = (f'http://127.0.0.1:32400/library/sections/{section}/all'\n"
             "           f'?includeFields=file&X-Plex-Token={tok}')\n"
             "    try:\n"
-            "        mds = json.loads(urllib.request.urlopen(url, timeout=60).read())\n"
+            "        mds = json.loads(urllib.request.urlopen(\n"
+            "            urllib.request.Request(url, headers=H), timeout=60).read())\n"
             "    except Exception:\n"
             "        continue\n"
-            "    for mt in (mds['MediaContainer'].get('Metadata') or []):\n"
-            "        for med in mt.get('Media') or []:\n"
-            "            for pt in med.get('Part') or []:\n"
-            "                if (pt.get('file') or '').endswith(suffix):\n"
-            "                    rk = mt['ratingKey']; break\n"
+            "    rk = match(mds['MediaContainer'].get('Metadata') or [])\n"
             "print(json.dumps({'rating_key': rk}))\n")
         import os
         suffix = os.path.basename(plex_path)
-        out = await self._exec(script, suffix)
+        out = await self._exec(script, f"{suffix}|{exact_path or ''}")
         return out.get("rating_key")

@@ -205,7 +205,7 @@ def test_20_ratingkey_not_found_abort_retient_old():
     kinds = [k for k, _e in r.events]
     assert "jit_switch_aborted" in kinds
     abort = next(e for k, e in r.events if k == "jit_switch_aborted")
-    assert abort["reason"] == "rating_key_not_found"
+    assert abort["reason"] == "rating_key_unresolved"
     assert abort["action"] == "old_source_retained"
 
 
