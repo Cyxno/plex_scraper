@@ -269,6 +269,39 @@ class PlexExecClient:
             "print(json.dumps(out))\n")
         return (await self._exec(script, part_file)).get("rating_key")
 
+    async def find_rating_key_by_target(self, plex_path: str) -> int | None:
+        """ratingKey via symlink-target: Plex-parts onder /symlinks zijn
+        symlinks naar ons canonical .ids-pad — readlink levert dus een exacte
+        item-identiteit, onafhankelijk van de release-bestandsnaam.
+
+        ALLEEN-LEZEN (readlink + ro-DB); werkt voor gemigreerde items zonder
+        geregistreerd part-pad. Bounded: stopt bij de eerste match.
+        """
+        script = (
+            "import json,sys,os,sqlite3\n"
+            "want = sys.argv[1]\n"
+            "P = '/config/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db'\n"
+            "out = {'rating_key': None}\n"
+            "try:\n"
+            "    db = sqlite3.connect(f'file:{P}?mode=ro', uri=True, timeout=5.0)\n"
+            "    rows = db.execute(\n"
+            "        \"SELECT mp.file, mi.id FROM media_parts mp \"\n"
+            "        \"JOIN media_items mi ON mi.id=mp.media_item_id \"\n"
+            "        \"WHERE mp.file LIKE '/symlinks/%'\").fetchall()\n"
+            "    leaf = want.rstrip('/').split('/')[-1]\n"
+            "    for f, mid in rows:\n"
+            "        try:\n"
+            "            t = os.readlink(f)\n"
+            "        except OSError:\n"
+            "            continue\n"
+            "        if t.rstrip('/').split('/')[-1] == leaf:\n"
+            "            out['rating_key'] = mid\n"
+            "            break\n"
+            "except Exception as e:\n"
+            "    out = {'rating_key': None, 'error': repr(e)[:120]}\n"
+            "print(json.dumps(out))\n")
+        return (await self._exec(script, plex_path)).get("rating_key")
+
     async def find_rating_key_by_path(self, plex_path: str,
                                       exact_path: str | None = None) -> int | None:
         """ratingKey van het metadata-item dat dit part-bestand bezit.

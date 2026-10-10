@@ -717,8 +717,10 @@ class Resolver:
             self.metrics["generation_switches"] += 1
         source.generation = item.generation
         source.state = m.SourceState.ACTIVE.value
-        await self.store.retire_active(item.id, except_source_id=source.id)
         await self.store.update_source(source)
+        # single-active-invariant in één transactie: demote anderen + promoot
+        # deze — een interleaved/crashed activatie laat nooit dual-active achter
+        await self.store.activate_source(item.id, source.id)
         item.status = m.ItemStatus.READY.value
         await self.store.update_runtime(item)
         if switched and previous is not None:
@@ -733,10 +735,15 @@ class Resolver:
                           item_id=item.id, error=repr(exc)[:160])
 
     async def _active_source(self, item_id: str) -> m.Source | None:
-        for src in await self.store.list_sources(item_id):
-            if src.state == m.SourceState.ACTIVE.value:
-                return src
-        return None
+        actives = [s for s in await self.store.list_sources(item_id)
+                   if s.state == m.SourceState.ACTIVE.value]
+        if len(actives) > 1:
+            # reconcile-on-read: pre-existing dual-active (crash/race van een
+            # oudere build) → deterministisch één autoritatieve rij houden
+            # (hoogste generation; tie: laatste last_verified)
+            keep_id = await self.store.reconcile_active(item_id)
+            actives = ([s for s in actives if s.id == keep_id] or actives[:1])
+        return actives[0] if actives else None
 
     # ------------------------------------------------------------ sessions
     def media_profile(self, item: m.MediaItem, size: int) -> m_prof.MediaProfile:

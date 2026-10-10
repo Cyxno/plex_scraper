@@ -263,7 +263,9 @@ class Store:
                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(media_item_id,provider,info_hash,file_id) DO UPDATE SET "
                     "file_name=excluded.file_name, size=excluded.size, cached=excluded.cached, "
-                    "score=excluded.score, score_json=excluded.score_json", params)
+                    "score=excluded.score, score_json=excluded.score_json, "
+                    "state=excluded.state, generation=excluded.generation, "
+                    "last_verified=excluded.last_verified", params)
             except sqlite3.IntegrityError:
                 # Zelfde id hergebruikt via _similar_source (info_hash-match) maar met
                 # een andere file_id: de conflict-target (media_item_id,provider,
@@ -314,6 +316,35 @@ class Store:
             c.execute("UPDATE sources SET state='retired' WHERE media_item_id=? AND state='active'"
                       " AND (? IS NULL OR id != ?)", (item_id, except_source_id, except_source_id))
         await self.run(fn)
+
+    async def activate_source(self, item_id: str, source_id: str) -> None:
+        """Atomische single-active-invariant: demote alle andere actieve
+        rijen en promoot deze — één transactie, dus interleaved activaties
+        of een crash ertussen laten nooit twee actieve rijen achter."""
+        def fn(c: sqlite3.Connection):
+            c.execute("UPDATE sources SET state='retired' WHERE media_item_id=?"
+                      " AND state='active' AND id!=?", (item_id, source_id))
+            c.execute("UPDATE sources SET state='active' WHERE id=?"
+                      " AND media_item_id=?", (source_id, item_id))
+        await self.run(fn)
+
+    async def reconcile_active(self, item_id: str) -> str | None:
+        """Herstel de invariant deterministisch bij pre-existing dual-active:
+        houd de actieve rij met de hoogste generation (tie: laatste
+        last_verified, tie: laagste rowid) en demote de rest. Geschiedenis-
+        rijen blijven bewaard als 'retired'."""
+        def fn(c: sqlite3.Connection):
+            rows = c.execute(
+                "SELECT id FROM sources WHERE media_item_id=? AND state='active'"
+                " ORDER BY generation DESC, last_verified DESC, rowid ASC",
+                (item_id,)).fetchall()
+            if len(rows) <= 1:
+                return rows[0][0] if rows else None
+            keep = rows[0][0]
+            c.execute("UPDATE sources SET state='retired' WHERE media_item_id=?"
+                      " AND state='active' AND id!=?", (item_id, keep))
+            return keep
+        return await self.run(fn)
 
     # -------------------------------------------------------------- sessions
     async def create_session(self, ses: m.Session) -> None:

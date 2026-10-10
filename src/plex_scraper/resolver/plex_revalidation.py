@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -114,24 +115,47 @@ class PlexRevalidator:
         if part_path:
             self._part_paths[item_id] = part_path
 
+    async def _release_names(self, item: m.MediaItem) -> list[str]:
+        """Release-bestandsnamen van de bronnen van dit item, actief eerst —
+        voor gemigreerde READY-items zonder geregistreerd part-pad: het Plex-
+        part draagt de symlink-releasenaam, niet de .ids-uuid."""
+        from plex_scraper.ingest import delivery
+        try:
+            sources = await self.resolver.store.list_sources(item.id)
+        except Exception:                           # noqa: BLE001
+            return []
+        actives = [s for s in sources if s.state == m.SourceState.ACTIVE.value]
+        others = [s for s in sources if s.state != m.SourceState.ACTIVE.value]
+        names: list[str] = []
+        for s in actives + others:
+            name = os.path.basename(delivery.release_file_name(s) or "")
+            if name and name not in names and not name.startswith(".ids"):
+                names.append(name)
+        return names
+
     async def resolve_rating_key(self, item: m.MediaItem) -> tuple[int | None, str]:
         """Betrouwbare ratingKey-resolutie voor een bestaand Plex-item,
         zonder library-scan. Voorkeursvolgorde:
           1. reeds bekende ratingKey uit eerdere succesvolle verificatie;
-          2. read-only DB-lookup op exact Plex media-part path (snel, exact);
-          3. HTTP part-lookup (exact pad, dan suffix; TV via allLeaves);
-          4. bounded retry voor Plex index/cache-lag — daarna (None, 'unresolved').
+          2. read-only DB + HTTP op het geregistreerde exact part-path;
+          3. read-only DB op de release-bestandsnaam van de actieve bron en
+             daarna van kandidaat-bronnen (gemigreerde items: het Plex-part
+             draagt de symlink-releasenaam, nooit de .ids-uuid);
+          4. HTTP part-lookup (exact pad, dan suffix; TV via allLeaves);
+          5. bounded retry — daarna (None, 'unresolved').
+        De .ids-uuid-baseline wordt nooit als Plex-filename-identiteit
+        gebruikt; resultaat is altijd de leaf-ratingKey (episode/film).
         """
         tries = max(1, int(getattr(self.s, "plex_revalidation_lookup_retries", 3)))
         wait = float(getattr(self.s, "plex_revalidation_lookup_wait_s", 2.0))
         exact = self._part_paths.get(item.id)
+        db = getattr(self.plex, "find_rating_key_via_db", None)
         how = "cached"
         for attempt in range(tries):
             rk = self._last_rk.get(item.id)
             if rk:
                 return rk, how
             if exact:
-                db = getattr(self.plex, "find_rating_key_via_db", None)
                 if db is not None:
                     try:
                         rk = await db(exact)
@@ -143,6 +167,27 @@ class PlexRevalidator:
                     item.plex_path, exact_path=exact)
                 if rk:
                     return rk, "exact_path"
+            # 3) gemigreerd item: release-bestandsnamen (actief eerst,
+            #    daarna kandidaat-bronnen) tegen de read-only Plex-DB
+            if db is not None:
+                for name in await self._release_names(item):
+                    try:
+                        rk = await db(name)
+                    except Exception:               # noqa: BLE001
+                        rk = None
+                    if rk:
+                        return rk, "db_release_name"
+            # 4) symlink-target: het Plex-part is een symlink naar ons
+            #    .ids-pad — readlink is exacte item-identiteit, los van de
+            #    release-bestandsnaam (werkt voor élk gemigreerd item)
+            by_target = getattr(self.plex, "find_rating_key_by_target", None)
+            if by_target is not None:
+                try:
+                    rk = await by_target(item.plex_path)
+                except Exception:                   # noqa: BLE001
+                    rk = None
+                if rk:
+                    return rk, "db_symlink_target"
             rk = await self.plex.find_rating_key_by_path(item.plex_path)
             if rk:
                 return rk, "suffix"
