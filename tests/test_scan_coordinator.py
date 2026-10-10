@@ -216,3 +216,49 @@ def test_10_scan_section_script_parseert_combined_argv():
     src = inspect.getsource(PlexExecClient.scan_section)
     assert "split('|', 1)" in src
     assert "sys.argv[2]" not in src
+
+
+class LookupPlex(FakePlex):
+    def __init__(self, rating_key):
+        super().__init__()
+        self.rating_key = rating_key
+
+    async def find_rating_key_via_db(self, part_file):
+        return self.rating_key
+
+
+def test_11_ratingkey_gevonden_na_scan_succes(tmp_path):
+    """Natural-import observability: na plex_scan_succeeded wordt het
+    Plex-item opgezocht en als plex_scan_ratingkey_found gerapporteerd."""
+    plex = LookupPlex(10103)
+    c, rec = _coord(plex, debounce_s=0.01)
+    link = _mklink(tmp_path)
+
+    async def go():
+        await c.request(section=2, path="/symlinks/TV Shows/X/Season 2",
+                        item_id="i9", kind="episode", link_path=link,
+                        part_file="/symlinks/TV Shows/X/Season 2/e.mkv")
+    _run(c, go)
+    ev = [e for k, e in rec.events if k == "plex_scan_ratingkey_found"]
+    assert ev and ev[0]["rating_key"] == 10103
+    assert "Blank" not in (ev[0].get("error") or "")
+
+
+def test_12_ratingkey_lookup_faal_is_alleen_observability(tmp_path):
+    """Lookup-faal → event met error, scan blijft geslaagd, geen raise."""
+    class Broken(LookupPlex):
+        async def find_rating_key_via_db(self, part_file):
+            raise RuntimeError("db locked")
+
+    plex = Broken(10103)
+    c, rec = _coord(plex, debounce_s=0.01)
+    link = _mklink(tmp_path, "y.mkv")
+
+    async def go():
+        await c.request(section=2, path="/symlinks/TV Shows/Y",
+                        item_id="i10", kind="episode", link_path=link,
+                        part_file="/symlinks/TV Shows/Y/y.mkv")
+    _run(c, go)
+    assert SUCCEEDED in rec.kinds()
+    ev = [e for k, e in rec.events if k == "plex_scan_ratingkey_found"][0]
+    assert ev["rating_key"] is None and "db locked" in ev["error"]

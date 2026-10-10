@@ -602,6 +602,12 @@ class IngestBridge:
             if probe.get("ok"):
                 break
             await asyncio.sleep(probe_wait)
+        if probe.get("ok"):
+            # observability eerste echte import: symlink aantoonbaar leesbaar
+            # in de plex-container (head+mid seek)
+            await self.store.add_event(
+                "ingest_symlink_readable", item_id=item.id, link=link_plex,
+                size=probe.get("size"))
         if not probe.get("ok"):
             # materiaalisatie van de verse .ids-node in de rehydrate-FUSE kan
             # enkele minuten duren — korteriek retryen i.p.v. 300s
@@ -621,7 +627,7 @@ class IngestBridge:
         scan_dir = os.path.dirname(link_plex)   # plex-namespace-pad!
         await self.scans.request(section=section, path=scan_dir,
                                  item_id=item.id, kind=item.kind,
-                                 link_path=link)
+                                 link_path=link, part_file=link_plex)
         verified = False
         file_match = False
         present = False

@@ -12,10 +12,13 @@ elkaar kunnen groeien:
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 TEMPLATE = (Path(__file__).resolve().parents[1]
             / "src" / "plex_scraper" / "web" / "templates" / "cockpit.html")
@@ -120,6 +123,11 @@ def _extract_render_fns() -> str:
 
 
 def test_diagnostics_and_inventory_rendering():
+    if shutil.which("node") is None:
+        # omgevings-skip (slanke productie-image heeft geen node): de render-
+        # guard blijft actief in het test-image en op dev-boxes, en de
+        # portable suite faalt hier niet meer om een ontbrekende binary.
+        pytest.skip("node niet beschikbaar in deze omgeving")
     html = TEMPLATE.read_text(encoding="utf-8")
     fmt = re.search(r"/\* UI-FMT-BEGIN[^*]*\*/(.*?)/\* UI-FMT-END \*/",
                     html, re.S)

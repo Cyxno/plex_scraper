@@ -43,6 +43,7 @@ class PlexScanCoordinator:
         # section → {path-set}; laatste wint bij coalesce
         self._pending: dict[int, set[str]] = {}
         self._item_ids: list[str] = []
+        self._part_files: dict[str, str] = {}      # item_id → plex-part-pad
         self._timer: asyncio.Task | None = None
         self._worker: asyncio.Task | None = None
         self._last_scan_s: dict[int, float] = {}
@@ -51,7 +52,8 @@ class PlexScanCoordinator:
 
     # -------------------------------------------------------------- request
     async def request(self, section: int, path: str, item_id: str = "",
-                      kind: str = "", link_path: str | None = None) -> bool:
+                      kind: str = "", link_path: str | None = None,
+                      part_file: str | None = None) -> bool:
         """Nadat symlink + leesprobe OK zijn: plan een section-refresh.
         Retourneert direct — een scanfaal kan de ingest-flow nooit blokkeren.
         Als link_path is meegegeven en daar staat géén symlink wordt er
@@ -62,6 +64,8 @@ class PlexScanCoordinator:
                        item_id=item_id, media_kind=kind,
                        reason="symlink_bestaat_niet")
             return False
+        if item_id and part_file:
+            self._part_files[item_id] = part_file
         paths = self._pending.setdefault(int(section), set())
         if path in paths and self._timer is not None:
             self.metrics["deduped"] += 1
@@ -126,11 +130,39 @@ class PlexScanCoordinator:
                 self.metrics["succeeded"] += 1
                 self._emit(SUCCEEDED, section=int(section), path=scan_path,
                            item_ids=item_ids[:8])
+                # observability voor de eerstvolgende echte import: ratingKey
+                # per item opzoeken (read-only DB) en rapporteren — non-fatal
+                await self._report_rating_keys(item_ids)
             else:
                 self.metrics["failed"] += 1
                 self._emit(FAILED, section=int(section), path=scan_path,
                            item_ids=item_ids[:8], error=last_err,
                            attempts=self.retry_max)
+
+    async def _report_rating_keys(self, item_ids: list[str]) -> None:
+        """Observability-only: na een geslaagde scan het Plex-item per item
+        opzoeken (read-only) en als event rapporteren. Faalt dit, dan is dat
+        een waarneming — het raakt de ingest-state nooit."""
+        client = self.plex() if callable(self.plex) else self.plex
+        lookup = getattr(client, "find_rating_key_via_db", None)
+        if lookup is None:
+            return
+        for iid in item_ids:
+            part = self._part_files.get(iid)
+            if not part:
+                self._emit("plex_scan_ratingkey_found", item_id=iid,
+                           rating_key=None, reason="geen part-pad bekend")
+                continue
+            try:
+                rk = await lookup(part)
+            except Exception as exc:                # noqa: BLE001
+                self._emit("plex_scan_ratingkey_found", item_id=iid,
+                           rating_key=None, error=repr(exc)[:120])
+                continue
+            self._emit("plex_scan_ratingkey_found", item_id=iid,
+                       rating_key=rk, part=part[:120])
+            if rk:
+                self._part_files.pop(iid, None)
 
     # ---------------------------------------------------------- lifecycle
     async def flush_now(self) -> None:
