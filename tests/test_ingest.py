@@ -408,6 +408,8 @@ async def test_tv_identity_and_queue_pipeline_to_ready(
         assert target.startswith(ingest_settings.canonical_root + "/.ids/")
         # symlink in de arr-structuur onder de symlink-root
         assert "/TV Shows/Lanterns/Season 1/" in fresh.delivered_symlink
+        # scan-coordinator: debounce-venster overslaan → targeted scan
+        await bridge.scans.flush_now()
         # plex-exec kreeg de probes + scan (Phase 19)
         assert bridge.plex.scans and bridge.plex.probes
 

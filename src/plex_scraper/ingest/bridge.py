@@ -69,6 +69,14 @@ class IngestBridge:
             section_movies=getattr(settings, "plex_section_movies", 1))
         self.plex_tv_section = int(getattr(settings, "plex_section_tv", 2))
         self.plex_movie_section = int(getattr(settings, "plex_section_movies", 1))
+        # gededupliceerde library-refresh na geslaagde symlink (MobLand-fix
+        # 2026-10-09): debounce per section, bounded retry, expliciete events
+        from plex_scraper.ingest.scan_coordinator import PlexScanCoordinator
+        self.scans = PlexScanCoordinator(
+            lambda: self.plex, store_event=self.store_event,
+            debounce_s=float(getattr(settings, "plex_scan_debounce_s", 45.0)),
+            retry_max=int(getattr(settings, "plex_scan_retry_max", 3)),
+            retry_backoff_s=float(getattr(settings, "plex_scan_retry_backoff_s", 15.0)))
         self.sonarr_root_map = delivery.parse_root_map(
             getattr(settings, "sonarr_root_map", "/media=TV Shows"))
         self.radarr_root_map = delivery.parse_root_map(
@@ -148,6 +156,7 @@ class IngestBridge:
         for t in (self._task, self._reconcile_task, self._circuit_drain_task):
             if t is not None:
                 t.cancel()
+        self.scans.stop()
 
     async def _recover_on_start(self) -> None:
         """Herstart-veiligheid: tussenstanden → FAILED_RETRYABLE (Phase 10)."""
@@ -592,20 +601,17 @@ class IngestBridge:
                 retry_in=90.0)
             return
 
-        # Plex-scan trigger (bounded) en part-verificatie. De leesprobe hier-
-        # boven is het harde playability-bewijs; de part-match is obser-
-        # vationeel: episodes die al een (mogelijk dode) part hebben krijgend
-        # onze part pas op Plex' eigen scan-cadans. De arr-reconcile (hasFile)
-        # is de acceptatie-arbiter — daarom blokkeert een uitblijvende part-
-        # match de delivery niet langer (productie: 38 jobs vast op deze poll).
+        # Plex-scan via de scan-coordinator: gededupliceerd (batch van
+        # ingests binnen het debounce-venster → één refresh), bounded retry,
+        # expliciete plex_scan_* events. Gepland pas NADAT symlink + lees-
+        # probe slaagden; een faalende scan keert nooit terug in de job-
+        # status (READY blijft READY — observationeel event volstaat).
         section = self.plex_tv_section if item.kind == "episode" \
             else self.plex_movie_section
         scan_dir = os.path.dirname(link_plex)   # plex-namespace-pad!
-        try:
-            await self.plex.scan_section(section, scan_dir)
-        except Exception as exc:                       # noqa: BLE001
-            await self.store.add_event("ingest_plex_scan_failed",
-                                       item_id=item.id, error=repr(exc)[:160])
+        await self.scans.request(section=section, path=scan_dir,
+                                 item_id=item.id, kind=item.kind,
+                                 link_path=link)
         verified = False
         file_match = False
         present = False

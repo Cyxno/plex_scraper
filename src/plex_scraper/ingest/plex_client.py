@@ -135,8 +135,12 @@ class PlexExecClient:
             "else:\n"
             "    url += '?X-Plex-Token=' + tok\n"
             "req = urllib.request.Request(url, method='GET')\n"
-            "with urllib.request.urlopen(req, timeout=30) as r:\n"
-            "    print(json.dumps({'scanned': section, 'status': r.status}))\n")
+            "try:\n"
+            "    with urllib.request.urlopen(req, timeout=30) as r:\n"
+            "        print(json.dumps({'scanned': section, 'status': r.status}))\n"
+            "except Exception as e:\n"
+            "    print(json.dumps({'scanned': section, 'status': 0,\n"
+            "                      'error': repr(e)[:120]}))\n")
         return await self._exec(script, f"{section}|{path or ''}")
 
     async def find_episode(self, show_title: str, season: int, episode: int,
