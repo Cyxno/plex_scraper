@@ -295,10 +295,17 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
             "read_bytes": r["read_bytes"],
             "caches": resolver.caches.stats(),
             "runtime": dict(sorted(resolver.runtime_metrics.items())),
-            "adaptive": {k: resolver.metrics[k] for k in
+            "adaptive": {k: resolver.metrics.get(k, 0) for k in
                          ("prefetch_bytes", "prefetch_cancelled_bytes",
                           "prefetch_hits", "prefetch_errors",
-                          "adaptive_fallbacks", "two_way_sessions")},
+                          "adaptive_fallbacks", "two_way_sessions",
+                          "seek_recovery_activated", "seek_recovery_deescalated",
+                          "seek_recovery_cancelled", "seek_recovery_jump",
+                          "concurrent_windows_current", "concurrent_windows_peak",
+                          "remote_window_started", "remote_window_reused",
+                          "remote_window_cancelled", "duplicate_fetch_avoided",
+                          "speculative_bytes_requested", "speculative_bytes_used",
+                          "speculative_bytes_wasted", "readahead_escalations")},
             "resources": {"rss_kb": process_rss_kb(), "cpu_seconds": round(process_cpu_seconds(), 3)},
             "recent_events": (await resolver.store.recent_events(20))[::-1],
         }
