@@ -105,6 +105,28 @@ class Resolver:
         # FASE 10/19: runtime-failover administratie (switch-budget per item)
         self._failover_budget: dict[str, tuple[int, float]] = {}
         self.runtime_metrics = defaultdict(int)
+        # globaal speculatief budget (BACKGROUND_FLOOD_FIX 2026-10-11):
+        # system-wide cap op speculatieve prefetch-windows, los van demanded
+        # reads — second line of defense achter de jump-only activatie.
+        self._spec_slots_used = 0
+
+    # --------------------------------------------- global speculative budget
+    def spec_slot_acquire(self) -> bool:
+        """Non-blocking: True = speculatieve window mag starten. Gedemande
+        P0-reads gaan hier nooit langs en worden dus nooit geblokkeerd."""
+        cap = max(0, int(getattr(self.s, "stream_speculative_global_max", 3)))
+        if cap == 0 or self._spec_slots_used >= cap:
+            self.metrics["speculative_slot_denied"] = \
+                self.metrics.get("speculative_slot_denied", 0) + 1
+            return False
+        self._spec_slots_used += 1
+        self.metrics["speculative_slots_in_use"] = self._spec_slots_used
+        return True
+
+    def spec_slot_release(self) -> None:
+        if self._spec_slots_used > 0:
+            self._spec_slots_used -= 1
+        self.metrics["speculative_slots_in_use"] = self._spec_slots_used
 
     # ------------------------------------------------------------ lifecycle
     async def _evt(self, event_kind: str, item: m.MediaItem | None = None,
@@ -814,6 +836,11 @@ class Resolver:
                 pass
         profile = self.media_profile(item, source.size)
         required = profile.required_mbit(self.s.sweeper_throughput_margin)
+        # BACKGROUND_FLOOD_FIX: expliciete two_way=0 (health/soak/sweeper/
+        # probe) = vertrouwbare background-caller — speculative recovery
+        # volledig onderdrukt. Echte playback (None/True) houdt de
+        # gedragsmatige jump-gate in stream.py als primaire poort.
+        background_caller = two_way is False
         # FASE 1/3: JIT playback preflight — alleen op het echte play-signaal
         # (open_handle zónder two_way=0); background-checks (two_way=0) slaan
         # dit over. Bounded: FAST/MARGINAL direct, DEGRADED ≤ jit_max_wait_s.
@@ -829,7 +856,8 @@ class Resolver:
         reader = AdaptiveRangeReader(self, source.id, source.size,
                                      self.s.stream_readahead_bytes,
                                      two_way=two_way,
-                                     fallback_after_errors=self.s.adaptive_fallback_errors)
+                                     fallback_after_errors=self.s.adaptive_fallback_errors,
+                                     allow_speculation=not background_caller)
         if two_way:
             self.metrics["two_way_sessions"] += 1
             # FASE 18: playback-scoped hot spare (link-prewarm, geen benchmark)

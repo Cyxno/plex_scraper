@@ -305,7 +305,9 @@ def create_app(resolver: Resolver, settings) -> FastAPI:
                           "remote_window_started", "remote_window_reused",
                           "remote_window_cancelled", "duplicate_fetch_avoided",
                           "speculative_bytes_requested", "speculative_bytes_used",
-                          "speculative_bytes_wasted", "readahead_escalations")},
+                          "speculative_bytes_wasted", "demanded_bytes_cancelled",
+                          "speculative_slots_in_use", "speculative_slot_denied",
+                          "readahead_escalations")},
             "resources": {"rss_kb": process_rss_kb(), "cpu_seconds": round(process_cpu_seconds(), 3)},
             "recent_events": (await resolver.store.recent_events(20))[::-1],
         }

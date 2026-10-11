@@ -109,6 +109,8 @@ class Settings:
     stream_two_way_enabled: bool = True
     adaptive_two_way_min_mbit: float = 40.0
     adaptive_fallback_errors: int = 2
+    # globaal speculatief budget system-wide (BACKGROUND_FLOOD_FIX)
+    stream_speculative_global_max: int = 3
     candidate_min_improvement: float = 1.5
     candidate_headroom: float = 1.2
     # JIT playback preflight (FASE 3-15)
@@ -244,6 +246,8 @@ class Settings:
                 "ADAPTIVE_TWO_WAY_MIN_MBIT", cls.adaptive_two_way_min_mbit)),
             adaptive_fallback_errors=_int(
                 "ADAPTIVE_FALLBACK_ERRORS", cls.adaptive_fallback_errors),
+            stream_speculative_global_max=_int(
+                "STREAM_SPECULATIVE_GLOBAL_MAX", cls.stream_speculative_global_max),
             candidate_min_improvement=float(
                 os.environ.get("CANDIDATE_MIN_IMPROVEMENT", cls.candidate_min_improvement)),
             candidate_headroom=float(

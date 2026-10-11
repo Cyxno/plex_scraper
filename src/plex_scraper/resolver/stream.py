@@ -5,13 +5,23 @@ Eén AdaptiveRangeReader per open handle:
 - Windows zijn READAHEAD-gealigneerd (dedup: hetzelfde window wordt nooit
   twee keer tegelijk opgehaald — in-flight-registry per window-offset).
 - Twee modes:
-    * SEEK_RECOVERY_PREFETCH (recovery=True): cold open / seek / Cue-jump /
-      probe-fase — tot 3 outstanding remote windows (P0 = gevraagd window,
-      P1 = volgende sequentiële window, P2 = speculatief alleen bij
-      sequentie-vooruitgang). Doel: aggregaat-doorvoer tijdens de probe/jump-
-      fase (bewezen: 1 verbinding ≈ 17–39 Mbit, 3 parallel ≈ 103 Mbit).
+    * SEEK_RECOVERY_PREFETCH (recovery=True): bewezen seek/Cue-jump — tot 3
+      outstanding remote windows (P0 = gevraagd window, P1 = volgende
+      sequentiële window, P2 = speculatief alleen bij sequentie-vooruitgang).
+      Doel: aggregaat-doorvoer tijdens de jump-fase (bewezen: 1 verbinding
+      ≈ 17–39 Mbit, 3 parallel ≈ 103 Mbit).
     * normaal (recovery=False, two_way=True): één outstanding prefetch —
       het bewezen gedrag voor sequentiële playback.
+- Activatie ALLÉÉN op bewezen niet-sequentiële jump (incident 2026-10-11:
+  fresh-open-activatie liet élke korte sweeper/soak-sessie speculatief
+  W2/W3 starten → cancel-storm + ~200 GB verspild verkeer). Een verse
+  sessie start normaal; recovery volgt pas na echte jump-evidentie.
+  Expliciete background-callers (two_way=0: health/soak/sweeper) speculative
+  nooit (allow_speculation=False).
+- Globaal speculatief budget: system-wide cap (engine.spec_slot_acquire,
+  default 3) over alle sessies — gedemandeerde P0-reads worden nóóit
+  geblokkeerd; speculatieve slots zijn non-blocking (geen slot → geen
+  prefetch, geen wachtrij, geen deadlock).
 - De-escalatie: 2 opeenvolgende volledig sequentieel geconsumeerde windows
   zonder jump/cancel → recovery uit, terug naar normaal.
 - Jump/seek buiten het buffertraject: obsolete in-flight/ready windows
@@ -39,18 +49,22 @@ DEESCALATE_AFTER_WINDOWS = 2
 class AdaptiveRangeReader:
     def __init__(self, engine, source_id: str, size: int, readahead: int,
                  two_way: bool = False,
-                 fallback_after_errors: int = 2):
+                 fallback_after_errors: int = 2,
+                 allow_speculation: bool = True):
         self.engine = engine
         self.source_id = source_id          # source-bound: geen cross-source hergebruik
         self.size = size
         self.readahead = readahead
         self.two_way = two_way              # normaal: 1 outstanding prefetch
         self.recovery = False               # SEEK_RECOVERY_PREFETCH (cap 3)
+        self.allow_speculation = allow_speculation   # False: background-callers
         self.fallback_after_errors = fallback_after_errors
         self._buf_off = -1
         self._buf = b""
         self._inflight: dict[int, asyncio.Task] = {}   # window-offset → task
         self._ready: dict[int, bytes] = {}             # klaar, nietconsumeerde windows
+        self._spec: set[int] = set()    # speculatief gestarte window-offsets
+        self._spec_slots: set[int] = set()  # windows dat een globaal slot houdt
         self._err_streak = 0
         self.closed = False
         # sequentie-detectie (escalatie + de-escalatie)
@@ -107,7 +121,9 @@ class AdaptiveRangeReader:
             data = self._ready.pop(wo)
             self._buf_off, self._buf = wo, data
             self._m("remote_window_reused")
-            self._m("speculative_bytes_used", len(data))
+            if wo in self._spec:
+                self._spec.discard(wo)
+                self._m("speculative_bytes_used", len(data))
             self._err_streak = 0
             self._track_sequential(offset, length)
             self._count_window_progress(offset)
@@ -122,7 +138,9 @@ class AdaptiveRangeReader:
                 data = await task
                 self._ready.pop(wo, None)        # geen double-hold
                 self._m("remote_window_reused")
-                self._m("speculative_bytes_used", len(data))
+                if wo in self._spec:
+                    self._spec.discard(wo)
+                    self._m("speculative_bytes_used", len(data))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -136,13 +154,15 @@ class AdaptiveRangeReader:
                 return data[offset - self._buf_off:][:length]
             # gefaald → val door naar de synchrone miss-pad hieronder
 
-        # 4) miss: jump-detectie, obsolete werk cancelen, synchroon fetchen
-        fresh_session = self._last_end == -1
+        # 4) miss: jump-detectie, obsolete werk cancelen, synchroon fetchen.
+        #    Activatie ALLÉÉN op bewezen jump — een fresh session (of een
+        #    sweeper/soak-probe) start normaal en speculeert niet (incident
+        #    2026-10-11: fresh-open-activatie → cancel/waste-storm).
         jumped = self._is_jump(offset, wo)
         self._track_sequential(offset, length, miss=True)
         self._cancel_obsolete(wo)
-        if jumped or fresh_session:
-            self._activate_recovery(jumped=jumped, fresh=fresh_session)
+        if jumped and self.allow_speculation:
+            self._activate_recovery()
         data = await self._fetch(wo)
         self._buf_off, self._buf = wo, data
         self._count_window_progress(offset)
@@ -154,7 +174,12 @@ class AdaptiveRangeReader:
         werk cancelen, buffers loslaten. Geen orphan background requests."""
         self.closed = True
         self._cancel_all_inflight()
-        self._ready.clear()
+        # klaarliggende speculatieve windows worden nooit meer geconsumeerd
+        for w in list(self._ready):
+            n = len(self._ready.pop(w))
+            if w in self._spec:
+                self._spec.discard(w)
+                self._m("speculative_bytes_wasted", n)
         self._buf = b""
         self._buf_off = -1
 
@@ -173,15 +198,15 @@ class AdaptiveRangeReader:
                     <= self._buf_off + len(self._buf) + self.readahead) \
             and wo not in self._inflight and wo not in self._ready
 
-    def _activate_recovery(self, jumped: bool, fresh: bool) -> None:
+    def _activate_recovery(self) -> None:
+        """Alléén na bewezen jump (aanroep-site garandeert dat)."""
         if self.recovery:
             return
         self.recovery = True
         self._seq_windows = 0
         self._m("seek_recovery_activated")
+        self._m("seek_recovery_jump")
         self._m("readahead_escalations")
-        if jumped:
-            self._m("seek_recovery_jump")
 
     def _deescalate(self) -> None:
         if not self.recovery:
@@ -204,24 +229,38 @@ class AdaptiveRangeReader:
 
     def _cancel_obsolete(self, keep_wo: int) -> None:
         """Jump: in-flight/ready windows die het nieuwe demargebied niet
-        kunnen bedienen onmiddellijk cancelen/verwijderen."""
+        kunnen bedienen onmiddellijk cancelen/verwijderen. Waste telt
+        alléén echt speculatieve windows — gedemandeerd werk wordt nooit
+        als speculative waste geboekt (fix 2026-10-11)."""
         lo, hi = keep_wo - self.readahead, keep_wo + 2 * self.readahead
         for w in [w for w in self._inflight if not (lo <= w <= hi)]:
             task = self._inflight.pop(w)
             task.cancel()
+            self._release_spec_slot(w)
             self._m("remote_window_cancelled")
-            self._m("seek_recovery_cancelled")
-            self._m("speculative_bytes_wasted", self._window_len(w))
+            if w in self._spec:
+                self._spec.discard(w)
+                self._m("seek_recovery_cancelled")
+                self._m("speculative_bytes_wasted", self._window_len(w))
+            else:
+                self._m("demanded_bytes_cancelled")
         for w in [w for w in self._ready if not (lo <= w <= hi)]:
-            self._m("speculative_bytes_wasted", len(self._ready.pop(w)))
-        if self._inflight or self._ready:
-            self._seq_windows = 0
+            n = len(self._ready.pop(w))
+            if w in self._spec:
+                self._spec.discard(w)
+                self._m("speculative_bytes_wasted", n)
 
     def _cancel_all_inflight(self) -> None:
         for w, task in list(self._inflight.items()):
             task.cancel()
+            self._release_spec_slot(w)
             self._m("remote_window_cancelled")
-            self._m("speculative_bytes_wasted", self._window_len(w))
+            if w in self._spec:
+                self._spec.discard(w)
+                self._m("seek_recovery_cancelled")
+                self._m("speculative_bytes_wasted", self._window_len(w))
+            else:
+                self._m("demanded_bytes_cancelled")
         self._inflight.clear()
 
     def _window_len(self, wo: int) -> int:
@@ -243,6 +282,7 @@ class AdaptiveRangeReader:
             self._seq_small = 0
         self._last_end = offset + length
         if (not self.two_way and not self.recovery and not self._escalated
+                and self.allow_speculation
                 and self._seq_small >= self._escalate_after()):
             self.two_way = True
             self._escalated = True
@@ -257,10 +297,14 @@ class AdaptiveRangeReader:
         return max(1024, int(getattr(s, "stream_seq_escalate_max_len", 131072)))
 
     def _schedule(self, offset: int) -> None:
-        """Demand-aware scheduling: P0 = gedemandeerd window (loopt al),
-        P1 = volgende sequentiële window, P2 = speculatief derde window
-        alléén in recovery-mode met sequentie-vooruitgang. Cap: max 3
-        outstanding in recovery, 1 normaal; ready+inflight gebonden."""
+        """Demand-aware scheduling: P0 = gedemandeerd window (loopt al,
+        synchroon — wordt nooit geblokkeerd), P1 = volgende sequentiële
+        window, P2 = speculatief derde window alléén in recovery-mode met
+        sequentie-vooruitgang. Cap: max 3 outstanding in recovery, 1
+        normaal; ready+inflight gebonden; PLUS globaal speculatief budget
+        system-wide (non-blocking: geen slot → geen prefetch). Alle
+        hier gestarte windows zijn speculatief (boven het gedemandeerde
+        window) en tellen in requested/used/wasted."""
         if self.closed or not self.two_way and not self.recovery:
             return
         cap = self._cap()
@@ -273,7 +317,6 @@ class AdaptiveRangeReader:
         # sequentie-vooruitgang vereist voor P2 (geen blind lineair giswerk
         # tijdens jump-fases)
         allow_p2 = self.recovery and self._seq_windows >= 1
-        started = 0
         for i, w in enumerate((next_w, next_w + self.readahead)):
             if w >= self.size:
                 break
@@ -284,13 +327,15 @@ class AdaptiveRangeReader:
                 break
             if i == 1 and not allow_p2:
                 break
+            if not self._acquire_spec_slot():
+                break                    # globaal budget op — P0 blokkeert niet
             wl = self._window_len(w)
             self._m("remote_window_started")
-            if i == 1:
-                self._m("speculative_bytes_requested", wl)
+            self._spec.add(w)
+            self._spec_slots.add(w)
+            self._m("speculative_bytes_requested", wl)
             self._inflight[w] = asyncio.get_event_loop().create_task(
-                self._fetch_window(w))
-            started += 1
+                self._spec_fetch_window(w))
         try:
             self.engine.metrics["concurrent_windows_current"] = len(self._inflight)
             peak = self.engine.metrics.get("concurrent_windows_peak", 0)
@@ -299,14 +344,45 @@ class AdaptiveRangeReader:
         except Exception:                        # noqa: BLE001
             pass
 
+    def _acquire_spec_slot(self) -> bool:
+        """Globaal speculatief budget (Phase 4 safety net). Engine ontbreekt
+        of biedt geen slots aan → unlimited (test-engines). Non-blocking."""
+        acq = getattr(self.engine, "spec_slot_acquire", None)
+        return True if acq is None else bool(acq())
+
+    async def _spec_fetch_window(self, wo: int) -> bytes:
+        """Prefetch met gegarandeerde slot-release — geen leak in het
+        globale budget, ook bij cancel/fout."""
+        try:
+            return await self._fetch_window(wo)
+        finally:
+            self._release_spec_slot(wo)
+
+    def _release_spec_slot(self, wo: int) -> None:
+        """Exactly-once slot-release (ook voor tasks die vóór hun eerste
+        stap gecanceld worden — hun finally draait nooit)."""
+        if wo not in self._spec_slots:
+            return
+        self._spec_slots.discard(wo)
+        rel = getattr(self.engine, "spec_slot_release", None)
+        if rel is not None:
+            try:
+                rel()
+            except Exception:                    # noqa: BLE001 — never throw
+                pass
+
     async def _fetch_window(self, wo: int) -> bytes:
         try:
             data = await self._fetch(wo)
             # klaar → ready (geconsumeerd bij volgende read); cap ready
             while len(self._ready) >= MAX_READY_WINDOWS:
                 old = min(self._ready)
-                self._m("speculative_bytes_wasted", len(self._ready.pop(old)))
+                n = len(self._ready.pop(old))
+                if old in self._spec:
+                    self._spec.discard(old)
+                    self._m("speculative_bytes_wasted", n)
             self._ready[wo] = data
+            self._inflight.pop(wo, None)     # taak klaar → geen ghost in cap
             self._m("prefetch_bytes", len(data))
             self._err_streak = 0
             return data
@@ -320,8 +396,11 @@ class AdaptiveRangeReader:
     def _on_prefetch_error(self, exc: Exception) -> None:
         self._err_streak += 1
         self._m("prefetch_errors")
-        if self._err_streak >= self.fallback_after_errors:
-            # adaptive fallback — parallel schaalt niet, terug naar single
+        if self._err_streak >= self.fallback_after_errors and \
+                (self.recovery or self.two_way):
+            # adaptive fallback — parallel schaalt niet, terug naar single.
+            # Idempotent: alléén de overgang parallel→single telt (een
+            # volgende fout while al single is géén nieuwe fallback).
             self.recovery = False
             self.two_way = False
             self._m("adaptive_fallbacks")

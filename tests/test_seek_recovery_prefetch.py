@@ -73,16 +73,18 @@ async def _reads(r, off, n, step=32 * KIB):
         off += step
 
 
-def test_01_fresh_open_activeert_recovery():
-    """(1) fresh open/cold probe → recovery-mode aan (cap 3)."""
+def test_01_fresh_open_geen_recovery():
+    """(1) fresh open/cold probe → NORMALE mode, géén recovery, geen
+    speculatie (BACKGROUND_FLOOD_FIX: fresh-open-activatie verwijderd)."""
     eng = FakeEngine(64 * MIB, latency_s=0.0)
     r = _reader(eng)
 
     async def go():
         await r.read(0, 32 * KIB)
     asyncio.run(go())
-    assert r.recovery is True
-    assert eng.metrics["seek_recovery_activated"] == 1
+    assert r.recovery is False
+    assert eng.metrics.get("seek_recovery_activated", 0) == 0
+    assert eng.metrics.get("speculative_bytes_requested", 0) == 0
 
 
 def test_02_seek_activeert_recovery():
@@ -92,11 +94,10 @@ def test_02_seek_activeert_recovery():
 
     async def go():
         await _reads(r, 0, 300)                   # 9.6 MB sequentieel
-        r.recovery = False                        # alsof gede-escaleerd
         await r.read(40 * MIB, 32 * KIB)          # seek
     asyncio.run(go())
     assert r.recovery is True
-    assert eng.metrics["seek_recovery_activated"] == 2
+    assert eng.metrics["seek_recovery_activated"] == 1
 
 
 def test_03_jump_activeert_en_cancelt():
@@ -232,13 +233,16 @@ def test_10_gecancelde_task_vult_nieuwe_jump_niet():
 
 
 def test_11_deescalatie_na_2_stabiele_windows():
-    """(11) 2 stabiele sequentiële windows → recovery uit."""
+    """(11) jump-activatie + 2 stabiele sequentiële windows → recovery uit."""
     eng = FakeEngine(512 * MIB, latency_s=0.01)
     r = _reader(eng)
 
     async def go():
-        off = 0
-        for _ in range(700):                      # 22.4 MB ≥ 3 windows
+        await _reads(r, 0, 10)
+        await r.read(60 * MIB, 32 * KIB)          # jump → recovery aan
+        assert r.recovery is True
+        off = 60 * MIB + 32 * KIB
+        for _ in range(700):                      # ≥ 3 stabiele windows
             await r.read(off, 32 * KIB)
             off += 32 * KIB
     asyncio.run(go())
@@ -269,12 +273,14 @@ def test_13_later_seek_reactiveert():
     r = _reader(eng)
 
     async def go():
-        off = 0
+        await _reads(r, 0, 10)
+        await r.read(60 * MIB, 32 * KIB)          # jump → recovery aan
+        off = 60 * MIB + 32 * KIB
         for _ in range(700):
             await r.read(off, 32 * KIB)
             off += 32 * KIB
         assert r.recovery is False
-        await r.read(60 * MIB, 32 * KIB)          # seek
+        await r.read(10 * MIB, 32 * KIB)          # seek
     asyncio.run(go())
     assert r.recovery is True
     assert eng.metrics["seek_recovery_activated"] == 2
@@ -386,7 +392,7 @@ def test_22_trage_cdn_wint_bij_meerdere_ranges():
 
 
 def test_23_normale_lowbitrate_playback_niet_permanent_3way():
-    """(23) sequentiële playback de-escaleert en blijft op single-prefetch."""
+    """(23) sequentiële playback blijft op single-prefetch zonder recovery."""
     eng = FakeEngine(512 * MIB, latency_s=0.01)
     r = _reader(eng)
 
@@ -397,7 +403,8 @@ def test_23_normale_lowbitrate_playback_niet_permanent_3way():
             off += 32 * KIB
     asyncio.run(go())
     assert r.recovery is False and r.two_way is True
-    assert eng.metrics["seek_recovery_deescalated"] == 1
+    assert eng.metrics.get("seek_recovery_deescalated", 0) == 0
+    assert eng.metrics.get("seek_recovery_activated", 0) == 0
 
 
 def test_24_random_workload_geen_lineaire_speculatie():
