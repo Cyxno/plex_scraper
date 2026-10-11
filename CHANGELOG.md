@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased (post-1.0.4 production hardening, 2026-10-08 → 2026-10-11)
+
+### Streaming / read-ahead
+- `SEEK_RECOVERY_PREFETCH`: bounded 3-window concurrency during cold seek/probe (proven: 1 conn ≈ 39 Mbit → 3 parallel ≈ 103 Mbit aggregate), with de-escalation after 2 stable sequential windows and per-window in-flight dedup.
+- `BACKGROUND_FLOOD_FIX`: recovery activation now requires proven non-sequential jumps — fresh opens no longer speculate. Explicit background callers (health/sweeper/soak, `two_way=0`) never speculate or escalate. System-wide speculative budget (default 3 windows, non-blocking, demand never blocked). Waste metrics corrected: only genuinely speculative bytes count; demanded cancellations tracked separately (`demanded_bytes_cancelled`).
+- Read-ahead escalation for small sequential FUSE reads; adaptive fallback made idempotent (only the parallel→single transition counts).
+
+### Resolver / source handling
+- Source identity on switches: layout compatibility + controlled transition (material switch gate).
+- Reliable ratingKey resolution for migrated items (leaf `metadata_item_id`, single-active invariant).
+- Switch hardening: stable candidate qualification and safe switch ordering.
+- Targeted Plex metadata revalidation after source generation switches.
+
+### Ingest
+- `PlexScanCoordinator`: deduplicated library refresh after symlink creation.
+- Scan-exec argv failure and ratingKey-leaf closure; crop-tolerant resolution verification.
+
+### Ops
+- Cockpit diagnostics are live-only (physical/provider/sweep/ingest); no fictitious recount-pending.
+- TorBox daily-limit retry loop prevented.
+- Seek-recovery/window metrics exposed via `/status` (safe-get — missing keys never raise).
+
+### License
+- Relicensed MIT → AGPL-3.0-only (full official AGPL v3 text added as LICENSE).
+
 ## 1.0.4 — 2026-10-08 (public-release hardening + provider-blackout hardening)
 
 ### Public/privacy hardening
